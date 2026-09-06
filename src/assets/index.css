@@ -1,0 +1,110 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-slate-50 text-slate-900 font-sans;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Scrollbar styling for clinical panels */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-slate-100;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-slate-300 rounded-full;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-slate-400;
+  }
+}
+
+@layer components {
+  /* Touch-target minimum for patient kiosk */
+  .kiosk-btn {
+    @apply min-h-[60px] min-w-[60px] flex items-center justify-center;
+  }
+
+  /* Clinical card base */
+  .clinical-card {
+    @apply bg-white border border-slate-200 rounded-lg shadow-clinical;
+  }
+
+  /* SOAP note textarea */
+  .soap-textarea {
+    @apply w-full p-3 text-sm font-mono bg-slate-50 border border-slate-200 rounded-md
+           text-slate-800 resize-none focus:outline-none focus:ring-2 focus:ring-emerald-500
+           focus:border-transparent transition-all duration-150;
+  }
+
+  /* Triage badge base */
+  .triage-badge {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold;
+  }
+
+  /* Priority animations for emergency cards */
+  .emergency-pulse {
+    animation: emergencyPulse 1.5s ease-in-out infinite;
+  }
+
+  @keyframes emergencyPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4); }
+    50% { box-shadow: 0 0 0 8px rgba(220, 38, 38, 0); }
+  }
+
+  /* Voice wave bars */
+  .wave-bar {
+    @apply inline-block w-1 rounded-full bg-emerald-500 mx-px;
+    animation: waveBar 1.2s ease-in-out infinite;
+  }
+  .wave-bar:nth-child(1) { animation-delay: 0s; }
+  .wave-bar:nth-child(2) { animation-delay: 0.1s; }
+  .wave-bar:nth-child(3) { animation-delay: 0.2s; }
+  .wave-bar:nth-child(4) { animation-delay: 0.3s; }
+  .wave-bar:nth-child(5) { animation-delay: 0.4s; }
+  .wave-bar:nth-child(6) { animation-delay: 0.3s; }
+  .wave-bar:nth-child(7) { animation-delay: 0.2s; }
+  .wave-bar:nth-child(8) { animation-delay: 0.1s; }
+  .wave-bar:nth-child(9) { animation-delay: 0s; }
+
+  @keyframes waveBar {
+    0%, 100% { height: 6px; }
+    50% { height: 28px; }
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  /* Gradient overlays */
+  .gradient-slate {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+  }
+
+  .gradient-emerald {
+    background: linear-gradient(135deg, #059669 0%, #047857 100%);
+  }
+
+  /* Print styles for consultation slip */
+  @media print {
+    .no-print { display: none !important; }
+    .print-only { display: block !important; }
+    body { background: white !important; }
+  }
+}
