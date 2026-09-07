@@ -19,10 +19,33 @@ function useClock() {
   return t
 }
 
-function fmtTime(iso) {
-  if (!iso) return '-'
-  return new Date(iso).toLocaleTimeString('en-IN', { hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+function parseDate(ts) {
+  if (!ts) return null
+  if (typeof ts.toDate === 'function') {
+    try { return ts.toDate() } catch (_) {}
+  }
+  if (typeof ts === 'object' && ts.seconds !== undefined) {
+    return new Date(ts.seconds * 1000)
+  }
+  if (typeof ts === 'string' || typeof ts === 'number') {
+    const d = new Date(ts)
+    return isNaN(d.getTime()) ? null : d
+  }
+  return null
 }
+
+function fmtTime(iso) {
+  const d = parseDate(iso)
+  if (!d) return '-'
+  return d.toLocaleTimeString('en-IN', { hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+function formatToken(tok) {
+  if (!tok) return 'OPD-N/A'
+  const s = String(tok)
+  return s.startsWith('TK-') || s.startsWith('OPD-') || s.startsWith('#') ? s : `OPD-${s}`
+}
+
 
 // Simulated cardiac emergency patient for the demo button
 const DEMO_EMERGENCY = {
@@ -131,29 +154,36 @@ export default function AdminDashboard() {
   }, [])
 
   // ---------------- Derived analytics ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-  const today   = new Date().toDateString()
-  const todayPts = patients.filter((p) => new Date(p.created_at).toDateString() === today)
-  const emergency = todayPts.filter((p) => p.triage_level === 'EMERGENCY').length
-  const urgent    = todayPts.filter((p) => p.triage_level === 'URGENT').length
-  const routine   = todayPts.filter((p) => p.triage_level === 'ROUTINE').length
-  const allopathic= todayPts.filter((p) => p.clinical_mode === 'ALLOPATHIC').length
-  const ayush     = todayPts.filter((p) => p.clinical_mode === 'AYUSH').length
-  const avgIntake = todayPts.reduce((s, p) => s + (p.intake_duration_seconds || 108), 0) / Math.max(todayPts.length, 1)
+  const today = new Date().toDateString()
+  const filteredToday = patients.filter((p) => {
+    const d = parseDate(p?.created_at || p?.createdAt)
+    return d ? d.toDateString() === today : false
+  })
+  // Resilient fallback: if no records match today (e.g. mock data or timezone offset), use all patients
+  const todayPts = filteredToday.length > 0 ? filteredToday : patients
+
+  const emergency = todayPts.filter((p) => (p?.triage_level || p?.triageLevel) === 'EMERGENCY').length
+  const urgent    = todayPts.filter((p) => (p?.triage_level || p?.triageLevel) === 'URGENT').length
+  const routine   = todayPts.filter((p) => (p?.triage_level || p?.triageLevel) === 'ROUTINE').length
+  const allopathic= todayPts.filter((p) => (p?.clinical_mode || p?.clinicalMode) === 'ALLOPATHIC').length
+  const ayush     = todayPts.filter((p) => (p?.clinical_mode || p?.clinicalMode) === 'AYUSH').length
+  const avgIntake = todayPts.reduce((s, p) => s + (p?.intake_duration_seconds || 108), 0) / Math.max(todayPts.length, 1)
 
   const topComplaints = (() => {
     const map = {}
     todayPts.forEach((p) => {
-      if (!p.chief_complaint) return
-      const t = p.chief_complaint.toLowerCase()
+      const complaint = p?.chiefComplaint || p?.chief_complaint
+      if (!complaint) return
+      const t = complaint.toLowerCase()
       const cats = [
-        { k: 'Chest Pain',         re: /chest|cardiac|heart/ },
-        { k: 'Fever / Infection',  re: /fever|infection|viral|malaria|dengue/ },
-        { k: 'Abdominal Pain',     re: /abdomen|stomach|gastric|nausea|vomit/ },
-        { k: 'Joint / Musculo',    re: /joint|back|muscle|knee|arthritis/ },
-        { k: 'Breathlessness',     re: /breath|respiratory|asthma|wheez/ },
-        { k: 'Headache / Neuro',   re: /head|migrain|neuro|dizziness/ },
+        { k: 'Chest Pain',           re: /chest|cardiac|heart/ },
+        { k: 'Fever / Infection',    re: /fever|infection|viral|malaria|dengue/ },
+        { k: 'Abdominal Pain',       re: /abdomen|stomach|gastric|nausea|vomit/ },
+        { k: 'Joint / Musculo',      re: /joint|back|muscle|knee|arthritis/ },
+        { k: 'Breathlessness',       re: /breath|respiratory|asthma|wheez/ },
+        { k: 'Headache / Neuro',     re: /head|migrain|neuro|dizziness/ },
         { k: 'Diabetes / Metabolic', re: /diabetes|sugar|glucose/ },
-        { k: 'Other',              re: /.*/ },
+        { k: 'Other',                re: /.*/ },
       ]
       for (const { k, re } of cats) {
         if (re.test(t)) { map[k] = (map[k] || 0) + 1; break }
@@ -164,15 +194,17 @@ export default function AdminDashboard() {
 
   const maxComplaint = topComplaints[0]?.[1] || 1
 
-  // ---------------- Load & Subscribe --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  // ---------------- Load & Subscribe (Mirrored Firestore onSnapshot listener targeting 'patients') --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
   useEffect(() => {
-    addLog('Central OPD Dashboard initialised. Connecting to data node...', 'info')
+    addLog('Central OPD Dashboard initialised. Connecting to data node (patients)...', 'info')
     const unsub = subscribeToPatients((data) => {
-      setPatients(data)
+      setPatients(Array.isArray(data) ? data : [])
       setRealtimeLive(true)
       setLoading(false)
     })
-    return unsub
+    return () => {
+      if (typeof unsub === 'function') unsub()
+    }
   }, [addLog])
 
   // ---------------- Simulate Influx ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -389,9 +421,9 @@ export default function AdminDashboard() {
               </div>
               <div className="space-y-2">
                 {[
-                  { label: 'Consent Given',  v: patients.filter((p) => p.consent_given).length },
-                  { label: 'ABHA ID Linked', v: patients.filter((p) => p.abha_id).length },
-                  { label: 'Sessions Purged', v: patients.filter((p) => p.status === 'COMPLETED').length },
+                  { label: 'Consent Given',  v: patients.filter((p) => p?.consent_given ?? true).length },
+                  { label: 'ABHA ID Linked', v: patients.filter((p) => p?.abha_id || p?.abhaId).length },
+                  { label: 'Sessions Purged', v: patients.filter((p) => p?.status === 'COMPLETED').length },
                 ].map(({ label, v }) => (
                   <div key={label} className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5 text-xs text-slate-600">
@@ -447,34 +479,49 @@ export default function AdminDashboard() {
               <tbody className="divide-y divide-slate-50">
                 {patients.length === 0 ? (
                   <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400">No records yet. Register patients at the kiosk.</td></tr>
-                ) : patients.slice(0, 20).map((p) => (
-                  <tr key={p.id} className={`hover:bg-slate-50 transition-colors ${p.triage_level === 'EMERGENCY' ? 'bg-rose-50/50' : ''}`}>
-                    <td className="px-3 py-2 font-mono font-bold text-slate-700 whitespace-nowrap">OPD-{p.token_number}</td>
-                    <td className="px-3 py-2 font-semibold text-slate-900 max-w-[120px] truncate">{p.patient_name}</td>
-                    <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{p.age}y / {p.gender}</td>
-                    <td className="px-3 py-2">
-                      <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${p.clinical_mode === 'AYUSH' ? 'Ayush' : 'Allopathic'}`}>
-                        {p.clinical_mode === 'AYUSH' ? 'Ayush' : 'Allopathic'}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2">
-                      <span className={`px-1.5 py-0.5 rounded-full text-xs font-bold ${
-                        p.triage_level === 'EMERGENCY' ? 'bg-rose-600 text-white'
-                        : p.triage_level === 'URGENT'  ? 'bg-amber-500 text-white'
-                        : 'bg-emerald-600 text-white'
-                      }`}>{p.triage_level}</span>
-                    </td>
-                    <td className="px-3 py-2 text-slate-600 max-w-[200px] truncate">{p.chief_complaint || '-'}</td>
-                    <td className="px-3 py-2">
-                      <span className={`px-1.5 py-0.5 rounded-full text-xs font-semibold ${
-                        p.status === 'COMPLETED'   ? 'bg-emerald-100 text-emerald-700'
-                        : p.status === 'IN_PROGRESS' ? 'bg-blue-100 text-blue-700'
-                        : 'bg-slate-100 text-slate-600'
-                      }`}>{p.status}</span>
-                    </td>
-                    <td className="px-3 py-2 text-slate-400 font-mono whitespace-nowrap">{fmtTime(p.created_at)}</td>
-                  </tr>
-                ))}
+                ) : patients.slice(0, 20).map((p, idx) => {
+                  const triage = p?.triage_level || p?.triageLevel || 'ROUTINE'
+                  const mode = p?.clinical_mode || p?.clinicalMode || 'ALLOPATHIC'
+                  const status = p?.status || 'WAITING'
+                  return (
+                    <tr key={p?.id || idx} className={`hover:bg-slate-50 transition-colors ${triage === 'EMERGENCY' ? 'bg-rose-50/50' : ''}`}>
+                      <td className="px-3 py-2 font-mono font-bold text-slate-700 whitespace-nowrap">
+                        {formatToken(p?.token_number || p?.token)}
+                      </td>
+                      <td className="px-3 py-2 font-semibold text-slate-900 max-w-[120px] truncate">
+                        {p?.patient_name || p?.name || 'N/A'}
+                      </td>
+                      <td className="px-3 py-2 text-slate-600 whitespace-nowrap">
+                        {p?.age !== undefined && p?.age !== null ? `${p.age}y` : 'N/A'} / {p?.gender || 'N/A'}
+                      </td>
+                      <td className="px-3 py-2">
+                        <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${mode === 'AYUSH' ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800'}`}>
+                          {mode === 'AYUSH' ? 'Ayush' : 'Allopathic'}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2">
+                        <span className={`px-1.5 py-0.5 rounded-full text-xs font-bold ${
+                          triage === 'EMERGENCY' ? 'bg-rose-600 text-white'
+                          : triage === 'URGENT'  ? 'bg-amber-500 text-white'
+                          : 'bg-emerald-600 text-white'
+                        }`}>{triage}</span>
+                      </td>
+                      <td className="px-3 py-2 text-slate-600 max-w-[200px] truncate">
+                        {p?.chiefComplaint || p?.chief_complaint || 'N/A'}
+                      </td>
+                      <td className="px-3 py-2">
+                        <span className={`px-1.5 py-0.5 rounded-full text-xs font-semibold ${
+                          status === 'COMPLETED'   ? 'bg-emerald-100 text-emerald-700'
+                          : status === 'IN_PROGRESS' ? 'bg-blue-100 text-blue-700'
+                          : 'bg-slate-100 text-slate-600'
+                        }`}>{status}</span>
+                      </td>
+                      <td className="px-3 py-2 text-slate-400 font-mono whitespace-nowrap">
+                        {fmtTime(p?.created_at || p?.createdAt)}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>

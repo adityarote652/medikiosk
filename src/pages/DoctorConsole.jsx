@@ -20,11 +20,22 @@ function formatToken(tok) {
 }
 
 function formatWait(createdAt) {
-  const diff = Math.floor((Date.now() - new Date(createdAt).getTime()) / 1000)
+  if (!createdAt) return '-'
+  let ms = 0
+  if (typeof createdAt.toDate === 'function') {
+    try { ms = createdAt.toDate().getTime() } catch (_) {}
+  } else if (typeof createdAt === 'object' && createdAt.seconds !== undefined) {
+    ms = createdAt.seconds * 1000
+  } else {
+    ms = new Date(createdAt).getTime()
+  }
+  const diff = Math.floor((Date.now() - ms) / 1000)
+  if (isNaN(diff) || diff < 0) return '0s'
   if (diff < 60) return `${diff}s`
   if (diff < 3600) return `${Math.floor(diff / 60)}m ${diff % 60}s`
   return `${Math.floor(diff / 3600)}h ${Math.floor((diff % 3600) / 60)}m`
 }
+
 
 function useTickEverySecond() {
   const [, tick] = useState(0)

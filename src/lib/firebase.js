@@ -85,6 +85,7 @@ let _firestoreDb  = null
 let _fs           = null   // cached firestore module exports
 
 export let isMockMode = true
+export let db = null
 
 if (isValidConfig) {
   try {
@@ -92,22 +93,54 @@ if (isValidConfig) {
     _fs = await import('firebase/firestore')
     const app = getApps().length > 0 ? getApp() : initializeApp(FIREBASE_CONFIG)
     _firestoreDb = _fs.getFirestore(app)
+    db = _firestoreDb
     isMockMode = false
     console.info('[MediKiosk] Firebase Firestore connected:', FIREBASE_CONFIG.projectId)
   } catch (err) {
     console.warn('[MediKiosk] Firebase init failed - local sync bus activated:', err.message)
     _firestoreDb = null
+    db = null
     isMockMode = true
   }
 } else {
   console.info('[MediKiosk] No Firebase credentials - BroadcastChannel + localStorage mode active.')
 }
 
+// Helper to extract timestamp ms
+function _toMs(val) {
+  if (!val) return 0
+  if (typeof val.toDate === 'function') {
+    try { return val.toDate().getTime() } catch (_) {}
+  }
+  if (typeof val === 'object' && val.seconds !== undefined) {
+    return val.seconds * 1000
+  }
+  const d = new Date(val)
+  return isNaN(d.getTime()) ? 0 : d.getTime()
+}
+
+function _normalizeDoc(d) {
+  const data = typeof d.data === 'function' ? d.data() : d
+  const id = d.id || data.id || _genId()
+  const chiefComplaint = data.chiefComplaint || data.chief_complaint || ''
+  return {
+    ...data,
+    id,
+    chiefComplaint,
+    chief_complaint: chiefComplaint,
+    token_number: data.token_number || data.tokenNumber || data.token || '',
+    patient_name: data.patient_name || data.patientName || data.name || 'Unknown',
+    triage_level: data.triage_level || data.triageLevel || 'ROUTINE',
+    clinical_mode: data.clinical_mode || data.clinicalMode || 'ALLOPATHIC',
+    status: data.status || 'WAITING',
+  }
+}
+
 // --- Public API ---
 
 /**
- * Subscribe to the patients collection, ordered by created_at desc.
- * Calls callback immediately with current data, then on every change.
+ * Subscribe to the 'patients' collection using onSnapshot.
+ * Mirrors real-time updates across Doctor Console and Admin Dashboard.
  *
  * @param {(patients: Array) => void} callback
  * @returns {() => void} unsubscribe function
@@ -115,18 +148,37 @@ if (isValidConfig) {
 export function subscribeToPatients(callback) {
   if (!isMockMode && _firestoreDb && _fs) {
     const { collection, query, orderBy, onSnapshot } = _fs
-    const q = query(collection(_firestoreDb, 'patients'), orderBy('created_at', 'desc'))
     try {
-      const unsub = onSnapshot(q,
+      const q = query(collection(_firestoreDb, 'patients'), orderBy('created_at', 'desc'))
+      const unsub = onSnapshot(
+        q,
         (snapshot) => {
-          const patients = snapshot.docs.map(d => ({ id: d.id, ...d.data() }))
+          const patients = snapshot.docs.map(_normalizeDoc)
           callback(patients)
         },
         (err) => {
-          console.error('[MediKiosk Firestore] onSnapshot error - falling back to local bus:', err.message)
-          isMockMode = true
-          _mockListeners.push(callback)
-          callback([..._mockDb].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)))
+          console.warn('[MediKiosk Firestore] orderBy query failed, listening directly to patients collection:', err.message)
+          try {
+            const fallbackUnsub = onSnapshot(
+              collection(_firestoreDb, 'patients'),
+              (snapshot) => {
+                const patients = snapshot.docs.map(_normalizeDoc)
+                patients.sort((a, b) => _toMs(b.created_at) - _toMs(a.created_at))
+                callback(patients)
+              },
+              (fallbackErr) => {
+                console.error('[MediKiosk Firestore] onSnapshot error - falling back to local bus:', fallbackErr.message)
+                isMockMode = true
+                _mockListeners.push(callback)
+                callback([..._mockDb].sort((a, b) => _toMs(b.created_at) - _toMs(a.created_at)))
+              }
+            )
+            return fallbackUnsub
+          } catch (e) {
+            isMockMode = true
+            _mockListeners.push(callback)
+            callback([..._mockDb].sort((a, b) => _toMs(b.created_at) - _toMs(a.created_at)))
+          }
         }
       )
       return unsub
@@ -138,8 +190,8 @@ export function subscribeToPatients(callback) {
 
   // Local fallback
   _mockListeners.push(callback)
-  callback([..._mockDb].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)))
-  return () => { _mockListeners = _mockListeners.filter(cb => cb !== callback) }
+  callback([..._mockDb].map(_normalizeDoc).sort((a, b) => _toMs(b.created_at) - _toMs(a.created_at)))
+  return () => { _mockListeners = _mockListeners.filter((cb) => cb !== callback) }
 }
 
 /**
@@ -151,12 +203,18 @@ export function subscribeToPatients(callback) {
  */
 export async function addPatientIntake(patientData) {
   const timestamp = new Date().toISOString()
+  const chief = patientData?.chiefComplaint || patientData?.chief_complaint || ''
+  const payload = {
+    ...patientData,
+    chiefComplaint: chief,
+    chief_complaint: chief,
+  }
 
   if (!isMockMode && _firestoreDb && _fs) {
     try {
       const { collection, addDoc, serverTimestamp } = _fs
       const savePromise = addDoc(collection(_firestoreDb, 'patients'), {
-        ...patientData,
+        ...payload,
         created_at: serverTimestamp(),
         updated_at: serverTimestamp(),
       })
@@ -164,7 +222,7 @@ export async function addPatientIntake(patientData) {
         setTimeout(() => reject(new Error('Firestore addDoc timed out (2s threshold)')), 2000)
       )
       const docRef = await Promise.race([savePromise, timeoutPromise])
-      const record = { id: docRef.id, ...patientData, created_at: timestamp, updated_at: timestamp }
+      const record = { id: docRef.id, ...payload, created_at: timestamp, updated_at: timestamp }
       return record
     } catch (err) {
       console.warn("Firebase save failed", err)
@@ -173,7 +231,7 @@ export async function addPatientIntake(patientData) {
   }
 
   // Local fallback
-  const record = { id: _genId(), ...patientData, created_at: timestamp, updated_at: timestamp }
+  const record = { id: _genId(), ...payload, created_at: timestamp, updated_at: timestamp }
   _mockDb.unshift(record)
   _broadcastUpdate()
   _notifyListeners()

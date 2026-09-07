@@ -7,9 +7,38 @@
 
 const rawKey = import.meta.env.VITE_GEMINI_API_KEY || ''
 const apiKey = typeof rawKey === 'string' ? rawKey.trim() : ''
-const GEMINI_API_KEY = apiKey
+export const GEMINI_API_KEY = apiKey
+
+export const GEMINI_MODEL = 'gemini-1.5-flash'
+
+/**
+ * Ensures exact model name "gemini-1.5-flash" is passed and strips any accidental "models/" prefix
+ * to prevent 404 Not Found errors.
+ */
+export function getGenerativeModel(options = { model: 'gemini-1.5-flash' }) {
+  const rawModel = typeof options === 'string' ? options : (options?.model || 'gemini-1.5-flash')
+  const cleanModel = String(rawModel).replace(/^models\//, '')
+  return {
+    model: cleanModel === 'gemini-1.5-flash' ? cleanModel : 'gemini-1.5-flash',
+    generateContent: async (prompt) => {
+      const text = typeof prompt === 'string' ? prompt : JSON.stringify(prompt)
+      return processClinicalIntake({ transcript: text })
+    },
+  }
+}
+
+export class GoogleGenerativeAI {
+  constructor(key) {
+    this.apiKey = key || GEMINI_API_KEY
+  }
+  getGenerativeModel(options = { model: 'gemini-1.5-flash' }) {
+    return getGenerativeModel(options)
+  }
+}
+
+const cleanModelName = getGenerativeModel({ model: 'gemini-1.5-flash' }).model
 const GEMINI_ENDPOINT =
-  'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent'
+  `https://generativelanguage.googleapis.com/v1beta/models/${cleanModelName}:generateContent`
 
 // --- System Prompt ---
 
@@ -177,7 +206,10 @@ function buildRequestContents({ transcript, imageBase64, clinicalMode }) {
  * @param {'ALLOPATHIC'|'AYUSH'} params.clinicalMode
  * @returns {Promise<Object>} Structured clinical JSON
  */
-export async function processClinicalIntake({ transcript = '', imageBase64 = null, clinicalMode = 'ALLOPATHIC' }) {
+export async function processClinicalIntake({ transcript = '', imageBase64 = null, clinicalMode = 'ALLOPATHIC', model = 'gemini-1.5-flash' }) {
+  const cleanModel = getGenerativeModel({ model }).model
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${cleanModel}:generateContent`
+
   // No API key configured -> immediate synthetic fallback
   const hasKey =
     Boolean(GEMINI_API_KEY) &&
@@ -217,7 +249,7 @@ export async function processClinicalIntake({ transcript = '', imageBase64 = nul
 
       let response
       try {
-        response = await fetch(`${GEMINI_ENDPOINT}?key=${GEMINI_API_KEY}`, {
+        response = await fetch(`${endpoint}?key=${GEMINI_API_KEY}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(requestBody),

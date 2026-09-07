@@ -4,7 +4,7 @@ import {
   User, Activity, Heart, Brain, Wind, ShieldAlert, FileText,
   X, RefreshCw, Volume2, Clock, Stethoscope, UploadCloud,
 } from 'lucide-react'
-import { processClinicalIntake, compressImageToBase64 } from '../lib/gemini'
+import { processClinicalIntake, compressImageToBase64, getGenerativeModel } from '../lib/gemini'
 import { addPatientIntake } from '../lib/firebase'
 import StepIndicator from '../components/StepIndicator'
 import WaveVisualizer from '../components/WaveVisualizer'
@@ -328,6 +328,8 @@ export default function PatientKiosk() {
 
       // 1. Wrap Gemini AI summary call with a strict 3-second timeout (Promise.race)
       try {
+        // Ensure model name is strictly "gemini-1.5-flash" without "models/" prefix
+        const modelInstance = getGenerativeModel({ model: 'gemini-1.5-flash' })
         const timeoutPromise = new Promise((_, reject) =>
           setTimeout(() => reject(new Error('AI intake timed out after 3s')), 3000)
         )
@@ -336,6 +338,7 @@ export default function PatientKiosk() {
             transcript: fullTranscript,
             imageBase64,
             clinicalMode: clinicalMode.id,
+            model: modelInstance.model,
           }),
           timeoutPromise,
         ])
