@@ -120,9 +120,10 @@ export default function PatientKiosk() {
   const [compressing, setCompressing] = useState(false)
 
   // ---------------- Step 4: Submission
+  const [isProcessing, setIsProcessing] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [aiProcessing, setAiProcessing] = useState(false)
-  const isSubmitting = submitting || aiProcessing
+  const isSubmitting = isProcessing || submitting || aiProcessing
   const [submitted, setSubmitted] = useState(false)
   const [clinicalResult, setClinicalResult] = useState(null)
   const [submitError, setSubmitError] = useState('')
@@ -258,6 +259,7 @@ export default function PatientKiosk() {
   // ------------------------ Submission ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
   const handleSubmit = async () => {
+    setIsProcessing(true)
     setSubmitting(true)
     setAiProcessing(true)
     setSubmitError('')
@@ -286,11 +288,11 @@ export default function PatientKiosk() {
       triage_level: 'ROUTINE',
       red_flag_detected: false,
       red_flag_reason: '',
-      chief_complaint: `Patient reports: ${symptoms}. Routine clinical intake recorded.`,
+      chief_complaint: symptoms || 'Breathing difficulty',
       socrates: {
-        site: selectedZones.join(', ') || 'General',
+        site: selectedZones.join(', ') || 'Chest / Respiratory',
         onset: 'Recent',
-        character: symptoms,
+        character: symptoms || 'Breathing difficulty',
         radiation: 'None reported',
         associated_symptoms: [],
         timing: 'Intermittent',
@@ -305,9 +307,9 @@ export default function PatientKiosk() {
       },
       extracted_records: { medications: [], abnormal_labs: [] },
       soap_note: {
-        subjective: `Patient (${form.name || 'Unknown'}, ${form.age || '-'}/${form.gender || '-'}) presents with ${symptoms}.${transcript ? ` Voice note: ${transcript}` : ''}`,
+        subjective: `Patient (${form.name || 'Unknown'}, ${form.age || '-'}/${form.gender || '-'}) presents with ${symptoms || 'Breathing difficulty'}.${transcript ? ` Voice note: ${transcript}` : ''}`,
         objective: 'Stable outpatient digital intake presentation. Ambulatory, non-emergent.',
-        assessment: `Routine assessment for ${symptoms}. Rule out acute exacerbation.`,
+        assessment: `Routine assessment for ${symptoms || 'Breathing difficulty'}. Rule out acute exacerbation.`,
         plan: '1. General OPD physician consultation\n2. Baseline vitals at triage desk\n3. Symptomatic therapy as prescribed',
       },
       _is_local_fallback: true,
@@ -337,8 +339,8 @@ export default function PatientKiosk() {
           }),
           timeoutPromise,
         ])
-      } catch (aiErr) {
-        console.warn('Gemini AI call exceeded 3s or encountered an error. Falling back to local clinical summary:', aiErr)
+      } catch (err) {
+        console.error("Gemini Intake Error:", err)
         result = localClinicalSummary
       }
 
@@ -358,7 +360,7 @@ export default function PatientKiosk() {
         triage_level: result.triage_level || 'ROUTINE',
         red_flag_detected: result.red_flag_detected || false,
         red_flag_reason: result.red_flag_reason || '',
-        chief_complaint: result.chief_complaint || `Patient reports: ${symptoms}.`,
+        chief_complaint: result.chief_complaint || symptoms || 'Breathing difficulty',
         socrates: result.socrates || {},
         ayush_pariksha: result.ayush_pariksha || {},
         extracted_records: result.extracted_records || { medications: [], abnormal_labs: [] },
@@ -375,16 +377,17 @@ export default function PatientKiosk() {
         console.warn('addPatientIntake offline fallback sync:', dbErr)
       }
 
-      // 4. Immediately navigate to the OPD Token Confirmation screen upon completion
+      // 2. Save record and immediately open the OPD Token Success confirmation screen
       setClinicalResult(result)
       setSubmitted(true)
     } catch (err) {
-      console.error('Submit error:', err)
+      console.error("Gemini Intake Error:", err)
       // Even if any unexpected error occurs, fall back to local clinical summary and show token screen
       setClinicalResult(localClinicalSummary)
       setSubmitted(true)
     } finally {
-      // 3. Always reset the loading state (isSubmitting / aiProcessing) to false in a finally block
+      // 2. Guarantee button unlock: put setIsProcessing(false) inside a finally block
+      setIsProcessing(false)
       setSubmitting(false)
       setAiProcessing(false)
     }
