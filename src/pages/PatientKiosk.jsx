@@ -315,6 +315,8 @@ export default function PatientKiosk() {
       _is_local_fallback: true,
     }
 
+    let finalResult = localClinicalSummary
+
     try {
       const fullTranscript = [
         `Patient: ${form.name}, Age: ${form.age}, Gender: ${form.gender}`,
@@ -324,14 +326,12 @@ export default function PatientKiosk() {
         transcript ? `Voice: ${transcript}` : '',
       ].filter(Boolean).join('\n')
 
-      let result = null
-
       // 1. Wrap Gemini AI summary call with a strict 3-second timeout (Promise.race)
       try {
         const timeoutPromise = new Promise((_, reject) =>
           setTimeout(() => reject(new Error('AI intake timed out after 3s')), 3000)
         )
-        result = await Promise.race([
+        const aiResult = await Promise.race([
           processClinicalIntake({
             transcript: fullTranscript,
             imageBase64,
@@ -339,57 +339,53 @@ export default function PatientKiosk() {
           }),
           timeoutPromise,
         ])
+
+        if (aiResult && aiResult.triage_level) {
+          finalResult = aiResult
+        }
       } catch (err) {
         console.error("Gemini Intake Error:", err)
-        result = localClinicalSummary
-      }
-
-      if (!result || !result.triage_level) {
-        result = localClinicalSummary
+        finalResult = localClinicalSummary
       }
 
       const record = {
         token_number: activeToken,
-        patient_name: form.name || result.patient_name || 'Unknown',
-        age: parseInt(form.age, 10) || result.age || null,
-        gender: form.gender || result.gender || 'Unknown',
+        patient_name: form.name || finalResult.patient_name || 'Unknown',
+        age: parseInt(form.age, 10) || finalResult.age || null,
+        gender: form.gender || finalResult.gender || 'Unknown',
         abha_id: form.abha || null,
         clinical_mode: clinicalMode.id,
         language: lang.code,
         transcript: fullTranscript,
-        triage_level: result.triage_level || 'ROUTINE',
-        red_flag_detected: result.red_flag_detected || false,
-        red_flag_reason: result.red_flag_reason || '',
-        chief_complaint: result.chief_complaint || symptoms || 'Breathing difficulty',
-        socrates: result.socrates || {},
-        ayush_pariksha: result.ayush_pariksha || {},
-        extracted_records: result.extracted_records || { medications: [], abnormal_labs: [] },
-        soap_note: result.soap_note || {},
+        triage_level: finalResult.triage_level || 'ROUTINE',
+        red_flag_detected: finalResult.red_flag_detected || false,
+        red_flag_reason: finalResult.red_flag_reason || '',
+        chief_complaint: finalResult.chief_complaint || symptoms || 'Breathing difficulty',
+        socrates: finalResult.socrates || {},
+        ayush_pariksha: finalResult.ayush_pariksha || {},
+        extracted_records: finalResult.extracted_records || { medications: [], abnormal_labs: [] },
+        soap_note: finalResult.soap_note || {},
         status: 'WAITING',
         cabin_assigned: null,
         consent_given: consentGiven,
         intake_duration_seconds: Math.round((Date.now() - intakeStart) / 1000),
       }
 
+      // 2. NON-BLOCKING FIREBASE: Wrap database save in try/catch. Log console.warn and DO NOT stop.
       try {
         await addPatientIntake(record)
-      } catch (dbErr) {
-        console.warn('addPatientIntake offline fallback sync:', dbErr)
+      } catch (err) {
+        console.warn("Firebase save failed", err)
       }
-
-      // 2. Save record and immediately open the OPD Token Success confirmation screen
-      setClinicalResult(result)
-      setSubmitted(true)
     } catch (err) {
       console.error("Gemini Intake Error:", err)
-      // Even if any unexpected error occurs, fall back to local clinical summary and show token screen
-      setClinicalResult(localClinicalSummary)
-      setSubmitted(true)
     } finally {
-      // 2. Guarantee button unlock: put setIsProcessing(false) inside a finally block
+      // 3. GUARANTEED NAVIGATION: Set isProcessing(false) and trigger the OPD Token Success screen in a finally block
       setIsProcessing(false)
       setSubmitting(false)
       setAiProcessing(false)
+      setClinicalResult(finalResult)
+      setSubmitted(true)
     }
   }
 

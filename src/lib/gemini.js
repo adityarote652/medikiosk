@@ -5,7 +5,8 @@
  * never hangs or shows a blank screen during an offline/key-missing demo.
  */
 
-const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY
+const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+const GEMINI_API_KEY = apiKey
 const GEMINI_ENDPOINT =
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent'
 

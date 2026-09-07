@@ -163,7 +163,7 @@ export async function addPatientIntake(patientData) {
       const record = { id: docRef.id, ...patientData, created_at: timestamp, updated_at: timestamp }
       return record
     } catch (err) {
-      console.error('[MediKiosk Firestore] addDoc failed - saving locally:', err.message)
+      console.warn("Firebase save failed", err)
       isMockMode = true
     }
   }
