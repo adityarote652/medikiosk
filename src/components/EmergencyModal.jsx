@@ -19,7 +19,7 @@ export default function EmergencyModal({ patient, onDismiss }) {
 
         <div className="bg-rose-700/50 rounded-xl p-4 mb-5">
           <p className="font-bold text-lg mb-1">
-            {patient?.patient_name ?? 'Unknown'} - OPD-{patient?.token_number}
+            {patient?.patient_name ?? 'Unknown'} - {String(patient?.token_number ?? '').startsWith('TK-') ? patient?.token_number : `OPD-${patient?.token_number ?? '?'}`}
           </p>
           <p className="text-rose-200 text-sm">{patient?.red_flag_reason ?? 'Red flag detected in AI triage'}</p>
           {patient?.chief_complaint && (

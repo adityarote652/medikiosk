@@ -13,6 +13,12 @@ import EmergencyModal from '../components/EmergencyModal'
 
 // --------- Helpers ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
+function formatToken(tok) {
+  if (!tok) return '?'
+  const s = String(tok)
+  return s.startsWith('TK-') || s.startsWith('OPD-') || s.startsWith('#') ? s : `OPD-${s}`
+}
+
 function formatWait(createdAt) {
   const diff = Math.floor((Date.now() - new Date(createdAt).getTime()) / 1000)
   if (diff < 60) return `${diff}s`
@@ -51,7 +57,7 @@ function PatientQueueCard({ patient, isSelected, onClick }) {
           <span className={`text-xs font-bold font-mono px-2 py-0.5 rounded-md flex-shrink-0 ${
             isEmergency ? 'bg-rose-600 text-white' : isUrgent ? 'bg-amber-500 text-white' : 'bg-slate-800 text-white'
           }`}>
-            OPD-{patient.token_number ?? '?'}
+            {formatToken(patient.token_number)}
           </span>
           <span className="text-sm font-semibold text-slate-900 truncate">{patient.patient_name || 'Unknown'}</span>
         </div>
@@ -521,7 +527,7 @@ export default function DoctorConsole() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-3 mb-2 flex-wrap">
-                      <span className="text-lg font-black font-mono text-slate-900">OPD-{p.token_number}</span>
+                      <span className="text-lg font-black font-mono text-slate-900">{formatToken(p.token_number)}</span>
                       <TriageBadge level={p.triage_level} />
                       {p.red_flag_detected && (
                         <span className="text-xs font-bold bg-white/20 px-2 py-0.5 rounded-full flex items-center gap-1">

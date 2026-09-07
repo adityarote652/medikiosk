@@ -155,11 +155,15 @@ export async function addPatientIntake(patientData) {
   if (!isMockMode && _firestoreDb && _fs) {
     try {
       const { collection, addDoc, serverTimestamp } = _fs
-      const docRef = await addDoc(collection(_firestoreDb, 'patients'), {
+      const savePromise = addDoc(collection(_firestoreDb, 'patients'), {
         ...patientData,
         created_at: serverTimestamp(),
         updated_at: serverTimestamp(),
       })
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Firestore addDoc timed out (2s threshold)')), 2000)
+      )
+      const docRef = await Promise.race([savePromise, timeoutPromise])
       const record = { id: docRef.id, ...patientData, created_at: timestamp, updated_at: timestamp }
       return record
     } catch (err) {
@@ -189,13 +193,17 @@ export async function updatePatientStatus(id, updates) {
   if (!isMockMode && _firestoreDb && _fs) {
     try {
       const { doc, updateDoc, serverTimestamp } = _fs
-      await updateDoc(doc(_firestoreDb, 'patients', id), {
+      const updatePromise = updateDoc(doc(_firestoreDb, 'patients', id), {
         ...updates,
         updated_at: serverTimestamp(),
       })
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Firestore updateDoc timed out (2s threshold)')), 2000)
+      )
+      await Promise.race([updatePromise, timeoutPromise])
       return
     } catch (err) {
-      console.error('[MediKiosk Firestore] updateDoc failed - updating locally:', err.message)
+      console.warn("Firebase update failed", err)
       isMockMode = true
     }
   }

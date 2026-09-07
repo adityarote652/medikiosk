@@ -127,7 +127,7 @@ export default function PatientKiosk() {
   const [submitted, setSubmitted] = useState(false)
   const [clinicalResult, setClinicalResult] = useState(null)
   const [submitError, setSubmitError] = useState('')
-  const [tokenNumber, setTokenNumber] = useState(() => Math.floor(Math.random() * 50) + 101)
+  const [tokenNumber, setTokenNumber] = useState('TK-101')
   const [intakeStart] = useState(() => Date.now())
 
   const recognitionRef = useRef(null)
@@ -371,9 +371,15 @@ export default function PatientKiosk() {
         intake_duration_seconds: Math.round((Date.now() - intakeStart) / 1000),
       }
 
-      // 2. NON-BLOCKING FIREBASE: Wrap database save in try/catch. Log console.warn and DO NOT stop.
+      // 2. NON-BLOCKING FIREBASE: Wrap database save in try/catch with 2s timeout. Log console.warn and DO NOT stop.
       try {
-        await addPatientIntake(record)
+        const dbTimeout = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Firestore write timed out after 2s')), 2000)
+        )
+        await Promise.race([
+          addPatientIntake(record),
+          dbTimeout,
+        ])
       } catch (err) {
         console.warn("Firebase save failed", err)
       }
@@ -386,6 +392,7 @@ export default function PatientKiosk() {
       setAiProcessing(false)
       setClinicalResult(finalResult)
       setSubmitted(true)
+      setStep(5)
     }
   }
 
@@ -402,7 +409,7 @@ export default function PatientKiosk() {
     setTranscript(''); setSelectedZones([]); setSeverity(null)
     setImagePreview(null); setImageBase64(null); setUploadedFile(null)
     setFormErrors({})
-    setTokenNumber(Math.floor(Math.random() * 50) + 101)
+    setTokenNumber(`TK-${Math.floor(Math.random() * 50) + 101}`)
   }
 
   // ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -410,7 +417,7 @@ export default function PatientKiosk() {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col pb-16">
       
-      {submitted && (
+      {(submitted || step === 5) && (
         <div className="bg-emerald-600 text-white text-sm font-semibold py-2.5 px-4 text-center w-full shadow-md z-50 flex items-center justify-center gap-2 animate-fade-in">
           <CheckCircle2 className="w-5 h-5" />
           OPD Intake Successfully Submitted to Doctor Console
@@ -467,7 +474,7 @@ export default function PatientKiosk() {
 
       {/* ---------------- Main ---------------- */}
       <main className="flex-1 max-w-2xl mx-auto w-full px-4 py-6">
-        <StepIndicator currentStep={step} labels={STEP_LABELS} />
+        <StepIndicator currentStep={submitted || step === 5 ? 4 : step} labels={STEP_LABELS} />
 
         {/* --------------------- STEP 1: Identity & DPDP Consent --------------------- */}
         {step === 1 && (
@@ -889,14 +896,14 @@ export default function PatientKiosk() {
         )}
 
         {/* --------------------- SUCCESS: OPD Token Card --------------------- */}
-        {submitted && clinicalResult && (
+        {(submitted || step === 5) && (
           <div className="animate-fade-in text-center space-y-5">
-            {clinicalResult.red_flag_detected && (
+            {clinicalResult?.red_flag_detected && (
               <div className="p-4 bg-rose-600 text-white rounded-xl flex items-start gap-3">
                 <AlertTriangle className="w-7 h-7 flex-shrink-0 animate-pulse" />
                 <div className="text-left">
                   <p className="font-bold text-base">EMERGENCY DETECTED</p>
-                  <p className="text-sm opacity-90">{clinicalResult.red_flag_reason}</p>
+                  <p className="text-sm opacity-90">{clinicalResult?.red_flag_reason}</p>
                   <p className="text-xs opacity-75 mt-0.5">Please proceed to Emergency Bay immediately.</p>
                 </div>
               </div>
@@ -912,23 +919,23 @@ export default function PatientKiosk() {
               <div className="bg-slate-50 border border-slate-200 rounded-2xl p-6 mb-5">
                 <p className="text-slate-500 text-xs font-semibold tracking-widest mb-1 uppercase">OPD Token</p>
                 <p className="text-5xl font-black text-slate-900 font-mono tracking-wider">
-                  {String(tokenNumber).startsWith('#') ? tokenNumber : `#TK-${tokenNumber}`}
+                  {String(tokenNumber).startsWith('TK-') ? tokenNumber : (String(tokenNumber).startsWith('#') ? tokenNumber : `TK-${tokenNumber}`)}
                 </p>
                 <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold mt-3 ${triageClass}`}>
-                  {clinicalResult.triage_level}
+                  {clinicalResult?.triage_level || 'ROUTINE'}
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4 text-left mb-4">
                 <div className="bg-slate-50 rounded-xl p-3">
                   <p className="text-xs text-slate-400 mb-0.5">Patient</p>
-                  <p className="text-sm font-bold text-slate-900 truncate">{form.name}</p>
+                  <p className="text-sm font-bold text-slate-900 truncate">{form.name || 'Patient'}</p>
                 </div>
                 <div className="bg-slate-50 rounded-xl p-3">
                   <p className="text-xs text-slate-400 mb-0.5">Est. Wait</p>
                   <p className="text-sm font-bold text-emerald-700">
-                    {clinicalResult.triage_level === 'EMERGENCY' ? 'IMMEDIATE'
-                      : clinicalResult.triage_level === 'URGENT' ? '~15 mins'
+                    {clinicalResult?.triage_level === 'EMERGENCY' ? 'IMMEDIATE'
+                      : clinicalResult?.triage_level === 'URGENT' ? '~15 mins'
                       : '~30-45 mins'}
                   </p>
                 </div>
@@ -942,12 +949,10 @@ export default function PatientKiosk() {
                 </div>
               </div>
 
-              {clinicalResult.chief_complaint && (
-                <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-left">
-                  <p className="text-xs font-semibold text-blue-700 mb-0.5">AI Summary:</p>
-                  <p className="text-xs text-blue-800 leading-relaxed">{clinicalResult.chief_complaint}</p>
-                </div>
-              )}
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-left">
+                <p className="text-xs font-semibold text-blue-700 mb-0.5">AI Summary:</p>
+                <p className="text-xs text-blue-800 leading-relaxed">{clinicalResult?.chief_complaint || 'Routine outpatient clinical intake recorded.'}</p>
+              </div>
             </div>
 
             <p className="text-sm text-slate-500">Please wait in the OPD seating area.</p>
@@ -958,7 +963,7 @@ export default function PatientKiosk() {
         )}
 
         {/* ---------------- Navigation buttons ---------------- */}
-        {!submitted && (
+        {!submitted && step < 5 && (
           <div className="flex items-center justify-between mt-8 pt-4 border-t border-slate-200">
             <button
               onClick={goBack}

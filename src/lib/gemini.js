@@ -5,7 +5,8 @@
  * never hangs or shows a blank screen during an offline/key-missing demo.
  */
 
-const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+const rawKey = import.meta.env.VITE_GEMINI_API_KEY || ''
+const apiKey = typeof rawKey === 'string' ? rawKey.trim() : ''
 const GEMINI_API_KEY = apiKey
 const GEMINI_ENDPOINT =
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent'
@@ -179,14 +180,14 @@ function buildRequestContents({ transcript, imageBase64, clinicalMode }) {
 export async function processClinicalIntake({ transcript = '', imageBase64 = null, clinicalMode = 'ALLOPATHIC' }) {
   // No API key configured -> immediate synthetic fallback
   const hasKey =
-    typeof GEMINI_API_KEY === 'string' &&
+    Boolean(GEMINI_API_KEY) &&
     GEMINI_API_KEY.length > 10 &&
-    !GEMINI_API_KEY.includes('your_gemini') &&
-    GEMINI_API_KEY.startsWith('AI')
+    !GEMINI_API_KEY.includes('your_') &&
+    !GEMINI_API_KEY.includes('placeholder')
 
   if (!hasKey) {
     console.info('[MediKiosk Gemini] No API key - returning synthetic clinical response.')
-    await new Promise((r) => setTimeout(r, 1600)) // realistic latency
+    await new Promise((r) => setTimeout(r, 1200)) // realistic latency
     return buildFallbackResponse(transcript, clinicalMode)
   }
 
