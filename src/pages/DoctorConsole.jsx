@@ -141,25 +141,35 @@ function AYUSHCard({ pariksha }) {
     return <p className="text-xs text-slate-400 italic">No Dashavidha Pariksha data captured.</p>
   }
   const fields = [
-    { key: 'prakriti',            label: 'Prakriti' },
-    { key: 'vikriti',            label: 'Vikriti' },
-    { key: 'dominant_dosha',     label: 'Dominant Dosha' },
-    { key: 'ahara_shakti',       label: 'Ahara Shakti (Agni)' },
-    { key: 'satva',              label: 'Satva (Mind)' },
-    { key: 'recommended_therapy',label: 'Recommended Therapy' },
+    { key: 'prakriti',            label: 'Prakriti (Constitution)' },
+    { key: 'dominant_dosha',      label: 'Dominant Dosha' },
+    { key: 'agni',                label: 'Agni (Digestion)' },
+    { key: 'ahara_shakti',        label: 'Ahara Shakti / Diet' },
+    { key: 'koshtha',             label: 'Koshtha (Bowel)' },
+    { key: 'vihara',              label: 'Vihara (Sleep Pattern)' },
+    { key: 'vikriti',             label: 'Vikriti (Imbalance)' },
+    { key: 'satva',               label: 'Satva (Mental)' },
+    { key: 'recommended_therapy', label: 'Recommended Therapy' },
   ]
   return (
-    <div className="grid grid-cols-2 gap-2">
-      {fields.map(({ key, label }) => {
-        const val = pariksha[key]
-        if (!val) return null
-        return (
-          <div key={key} className="bg-amber-50 rounded-lg p-2.5">
-            <p className="text-xs text-amber-600 font-medium mb-0.5">{label}</p>
-            <p className="text-xs text-slate-800 font-semibold">{val}</p>
-          </div>
-        )
-      })}
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-2">
+        {fields.map(({ key, label }) => {
+          const val = pariksha[key]
+          if (!val || val === 'Not assessed' || val === 'Not reported') return null
+          return (
+            <div key={key} className="bg-amber-50 rounded-lg p-2.5">
+              <p className="text-xs text-amber-600 font-medium mb-0.5">{label}</p>
+              <p className="text-xs text-slate-800 font-semibold">{val}</p>
+            </div>
+          )
+        })}
+      </div>
+      <div className="p-2.5 bg-amber-100 border border-amber-200 rounded-lg">
+        <p className="text-[10px] text-amber-800 font-semibold">
+          ⚕ AIIA Protocol — Dashavidha Pariksha constitutional assessment. Confirm with attending Ayurveda physician.
+        </p>
+      </div>
     </div>
   )
 }
@@ -306,6 +316,76 @@ function printConsultationSlip(p) {
   w.print()
 }
 
+// --------- FHIR Bundle Modal ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+function FHIRModal({ patient, onClose }) {
+  if (!patient) return null
+  const bundle = {
+    resourceType: 'Bundle',
+    type: 'document',
+    entry: [
+      {
+        resource: {
+          resourceType: 'Condition',
+          subject: { reference: `Patient/${patient.abha_id || 'unknown'}` },
+          code: { text: patient.chief_complaint || 'Outpatient Consultation' },
+          clinicalStatus: { coding: [{ code: 'active' }] },
+          recordedDate: new Date().toISOString(),
+        },
+      },
+      {
+        resource: {
+          resourceType: 'Observation',
+          status: 'final',
+          subject: { reference: `Patient/${patient.abha_id || 'unknown'}` },
+          code: { text: 'Triage Level' },
+          valueString: patient.triage_level || 'ROUTINE',
+          effectiveDateTime: new Date().toISOString(),
+        },
+      },
+      ...((patient.extracted_records?.medications || []).map((med, i) => ({
+        resource: {
+          resourceType: 'MedicationStatement',
+          subject: { reference: `Patient/${patient.abha_id || 'unknown'}` },
+          medication: { concept: { text: `${med.name} ${med.dosage || ''}` } },
+          dosage: [{ text: med.frequency || 'as directed' }],
+          status: 'active',
+        },
+      }))),
+    ],
+  }
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/70 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-xl w-full max-h-[85vh] flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 flex-shrink-0">
+          <div>
+            <div className="flex items-center gap-2">
+              <ShieldAlert className="w-5 h-5 text-blue-600" />
+              <span className="font-bold text-slate-900 text-base">ABDM / FHIR R4 Bundle</span>
+            </div>
+            <p className="text-xs text-slate-500 mt-0.5">Auto-generated FHIR mapping for {patient.patient_name} ({formatToken(patient.token_number)})</p>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-slate-100 transition-colors">
+            <X className="w-5 h-5 text-slate-500" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-5">
+          <div className="text-xs text-slate-500 italic mb-2">FHIR R4 JSON (read-only preview — exported on EHR commit)</div>
+          <pre className="bg-slate-900 text-emerald-400 text-xs p-4 rounded-xl overflow-x-auto leading-relaxed whitespace-pre-wrap font-mono">
+            {JSON.stringify(bundle, null, 2)}
+          </pre>
+        </div>
+        <div className="px-5 py-4 border-t border-slate-100 bg-slate-50 flex-shrink-0">
+          <p className="text-[10px] text-slate-400">
+            ⚕ ABDM Compliance — This bundle maps to HL7 FHIR R4. Final submission requires physician EHR commit and ABHA-linked health ID validation.
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // --------- Main Component ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 export default function DoctorConsole() {
@@ -321,6 +401,7 @@ export default function DoctorConsole() {
   const [clock, setClock]                   = useState(new Date())
   const [searchQuery, setSearchQuery]       = useState('')
   const [filterTab, setFilterTab]           = useState('ALL')
+  const [showFhirModal, setShowFhirModal]   = useState(false)
 
   // Emergency beep via Web Audio API (declared before useEffect to avoid ReferenceError)
   const playBeep = useCallback(() => {
@@ -530,6 +611,21 @@ export default function DoctorConsole() {
             </div>
           ) : (
             <div className="p-4 space-y-4 max-w-4xl">
+              {/* FHIR Modal */}
+              {showFhirModal && <FHIRModal patient={p} onClose={() => setShowFhirModal(false)} />}
+
+              {/* Red-Flag Banner */}
+              {p.red_flag_detected && (
+                <div className="bg-rose-600 border-2 border-rose-700 text-white rounded-xl p-4 shadow-lg animate-pulse flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <AlertTriangle className="w-8 h-8 flex-shrink-0" />
+                    <div>
+                      <h3 className="text-lg font-black tracking-wider">🚨 RED FLAG: Immediate Triage Required</h3>
+                      <p className="text-sm font-semibold opacity-95">Priority Casualty Escalation. AI detected high-risk indicators.</p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* ------ 1. Chief Complaint Banner ------ */}
               <div className={`rounded-xl p-4 ${
@@ -604,21 +700,36 @@ export default function DoctorConsole() {
                   <ChevronRight className={`w-4 h-4 text-slate-400 transform transition-transform ${expanded.docs ? 'rotate-90' : ''}`} />
                 </button>
                 {expanded.docs && (
-                  <div className="px-4 pb-4 space-y-4">
-                    <div>
-                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Current Medications</p>
-                      <MedicationRail medications={p.extracted_records?.medications} />
-                    </div>
-                    {p.extracted_records?.abnormal_labs?.length > 0 && (
-                      <div>
-                        <p className="text-xs font-semibold text-rose-600 uppercase tracking-wider mb-2">--- Abnormal Lab Values</p>
-                        <div className="space-y-2">
-                          {p.extracted_records.abnormal_labs.map((lab, i) => (
-                            <AbnormalLabBadge key={i} lab={lab} />
-                          ))}
+                  <div className="px-4 pb-4 space-y-6">
+                    {/* Chronological Timeline Rail */}
+                    <div className="relative pl-4 border-l-2 border-slate-200 space-y-5 mt-2">
+                      {p.extracted_records?.medications?.length > 0 && (
+                        <div className="relative">
+                          <span className="absolute -left-[23px] top-1 w-3 h-3 rounded-full bg-blue-500 border-2 border-white shadow-sm" />
+                          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Current Medications</p>
+                          <MedicationRail medications={p.extracted_records.medications} />
                         </div>
-                      </div>
-                    )}
+                      )}
+                      
+                      {p.extracted_records?.abnormal_labs?.length > 0 && (
+                        <div className="relative">
+                          <span className="absolute -left-[23px] top-1 w-3 h-3 rounded-full bg-amber-500 border-2 border-white shadow-sm" />
+                          <p className="text-xs font-semibold text-rose-600 uppercase tracking-wider mb-2">--- Abnormal Lab Values</p>
+                          <div className="space-y-2">
+                            {p.extracted_records.abnormal_labs.map((lab, i) => (
+                              <AbnormalLabBadge key={i} lab={lab} />
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {(!p.extracted_records?.medications?.length && !p.extracted_records?.abnormal_labs?.length) && (
+                        <div className="relative">
+                          <span className="absolute -left-[23px] top-1 w-3 h-3 rounded-full bg-slate-300 border-2 border-white" />
+                          <p className="text-xs text-slate-400 italic">No prior records uploaded for extraction.</p>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -629,12 +740,18 @@ export default function DoctorConsole() {
                   <div className="flex items-center gap-2">
                     <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                     <span className="text-sm font-bold text-slate-800">SOAP Clinical Notes</span>
-                    <span className="text-xs text-slate-400 font-normal">(AI pre-filled --- verify before saving)</span>
                   </div>
                   <ChevronRight className={`w-4 h-4 text-slate-400 transform transition-transform ${expanded.soap ? 'rotate-90' : ''}`} />
                 </button>
                 {expanded.soap && (
                   <div className="px-4 pb-4">
+                    {/* AI Draft Advisory Badge */}
+                    <div className="mb-3 p-2.5 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-2 shadow-sm">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                      <p className="text-xs text-amber-800 font-semibold tracking-wide">
+                        ⚠ AI Pre-Consultation Summary (Assistive Draft for Physician Verification)
+                      </p>
+                    </div>
                     <SOAPEditor soapNote={p.soap_note} onSave={saveSoap} isSaving={soapSaving} />
                   </div>
                 )}
@@ -653,6 +770,14 @@ export default function DoctorConsole() {
                       : p.status === 'COMPLETED'
                       ? <><CheckCircle2 className="w-4 h-4" /> Committed to EHR</>
                       : <><ShieldAlert className="w-4 h-4" /> Commit &amp; Sync to ABDM / EHR</>}
+                  </button>
+
+                  <button
+                    onClick={() => setShowFhirModal(true)}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 text-sm font-bold rounded-xl transition-colors"
+                  >
+                    <Activity className="w-4 h-4" />
+                    View ABDM / FHIR Bundle
                   </button>
 
                   <button

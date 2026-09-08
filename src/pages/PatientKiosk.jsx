@@ -19,9 +19,28 @@ const LANGUAGES = [
 ]
 
 const CLINICAL_MODES = [
-  { id: 'ALLOPATHIC', label: 'Allopathic OPD', sub: 'SOCRATES framework' },
-  { id: 'AYUSH', label: 'Ayush OPD', sub: 'Dashavidha Pariksha' },
+  { id: 'ALLOPATHIC', label: 'General Allopathic OPD', sub: 'SOCRATES framework' },
+  { id: 'AYUSH', label: 'Ayurveda OPD (AIIA Protocol)', sub: 'Dashavidha Pariksha' },
 ]
+
+// Dashavidha Pariksha self-reportable parameters for Ayush OPD
+const AYUSH_PRAKRITI = [
+  { id: 'VATA', label: 'Vata', desc: 'Light / Dry / Active', color: 'sky' },
+  { id: 'PITTA', label: 'Pitta', desc: 'Warm / Sharp / Intense', color: 'amber' },
+  { id: 'KAPHA', label: 'Kapha', desc: 'Heavy / Calm / Stable', color: 'emerald' },
+]
+const AYUSH_AGNI = [
+  { id: 'MANDA', label: 'Manda', desc: 'Low / Sluggish digestion', color: 'sky' },
+  { id: 'TIKSHNA', label: 'Tikshna', desc: 'High / Acidic / Hyperactive', color: 'amber' },
+  { id: 'SAMA', label: 'Sama (Balanced)', desc: 'Regular / Healthy appetite', color: 'emerald' },
+]
+const AYUSH_KOSHTHA = [
+  { id: 'KRURA', label: 'Krura', desc: 'Constipated / Dry / Hard stool', color: 'rose' },
+  { id: 'MRIDU', label: 'Mridu', desc: 'Loose / Frequent / Soft stool', color: 'amber' },
+  { id: 'MADHYAMA', label: 'Madhyama', desc: 'Normal / Regular bowel', color: 'emerald' },
+]
+const AYUSH_AHARA = ['Spicy/Hot foods', 'Oily/Fried foods', 'Cold/Refrigerated foods', 'Vegetarian', 'Non-vegetarian', 'Fasting regularly']
+const AYUSH_VIHARA = ['Deep / Restful sleep', 'Disturbed / Fragmented sleep', 'Irregular sleep hours', 'Day sleeping habit']
 
 // Body zones -------- only standard Lucide icons used
 const BODY_ZONES = [
@@ -112,12 +131,17 @@ export default function PatientKiosk() {
   const [activeChips, setActiveChips] = useState([])
   const [severity, setSeverity] = useState(null)
 
+  // ---------------- Step 2: Ayush Dashavidha profile
+  const [ayushProfile, setAyushProfile] = useState({ prakriti: '', agni: '', koshtha: '', ahara: [], vihara: [] })
+
   // ---------------- Step 3: Documents
   const [uploadedFile, setUploadedFile] = useState(null)
   const [imagePreview, setImagePreview] = useState(null)
   const [imageBase64, setImageBase64] = useState(null)
   const [dragOver, setDragOver] = useState(false)
   const [compressing, setCompressing] = useState(false)
+  const [scanning, setScanning] = useState(false)
+  const [scanDone, setScanDone] = useState(false)
 
   // ---------------- Step 4: Submission
   const [isProcessing, setIsProcessing] = useState(false)
@@ -129,6 +153,9 @@ export default function PatientKiosk() {
   const [submitError, setSubmitError] = useState('')
   const [tokenNumber, setTokenNumber] = useState('TK-101')
   const [intakeStart] = useState(() => Date.now())
+
+  // ---------------- FHIR Modal (DoctorConsole mirrors this on submit; kiosk has none)
+  const [showFhirModal, setShowFhirModal] = useState(false)
 
   const recognitionRef = useRef(null)
   const fileInputRef = useRef(null)
@@ -215,16 +242,35 @@ export default function PatientKiosk() {
     setIsListening(false)
   }, [])
 
+  // ------------------------ TTS (Speech Synthesis) Audio Readback ----------------------------------------
+
+  const speakText = useCallback((text) => {
+    if (typeof window === 'undefined' || !window.speechSynthesis) return
+    window.speechSynthesis.cancel()
+    const utterance = new SpeechSynthesisUtterance(text)
+    utterance.lang = lang.code
+    utterance.rate = 0.88
+    utterance.pitch = 1.0
+    window.speechSynthesis.speak(utterance)
+  }, [lang.code])
+
+  const CONSENT_TEXT = 'I consent to my voice transcript and uploaded documents being temporarily processed by AI for OPD clinical intake under the Digital Personal Data Protection Act 2023. This data is used only for this consultation, is not shared with third parties, and is purged upon session completion.'
+
   // ------------------------ File Handling ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
   const handleFileSelect = useCallback(async (file) => {
     if (!file?.type.startsWith('image/')) return
     setUploadedFile(file)
     setCompressing(true)
+    setScanDone(false)
+    setScanning(false)
     try {
       const b64 = await compressImageToBase64(file, 1200, 0.85)
       setImageBase64(b64)
       setImagePreview(b64)
+      // Trigger 2-second animated scanning beam after compression
+      setScanning(true)
+      setTimeout(() => { setScanning(false); setScanDone(true) }, 2000)
     } catch (err) {
       console.error('Image compression error:', err)
     } finally {
@@ -280,6 +326,17 @@ export default function PatientKiosk() {
       (transcript && transcript.trim()) ||
       'Breathing difficulty'
 
+    const ayushParikshaResolved = {
+      prakriti: ayushProfile.prakriti || 'Not assessed',
+      agni: ayushProfile.agni || 'Not assessed',
+      koshtha: ayushProfile.koshtha || 'Not assessed',
+      ahara_shakti: ayushProfile.ahara.length ? ayushProfile.ahara.join(', ') : 'Not reported',
+      vihara: ayushProfile.vihara.length ? ayushProfile.vihara.join(', ') : 'Not reported',
+      dominant_dosha: ayushProfile.prakriti || 'Kapha',
+      vikriti: ayushProfile.prakriti ? `${ayushProfile.prakriti} aggravation` : 'Pranavaha Srotas',
+      recommended_therapy: 'To be assessed by AIIA attending physician',
+    }
+
     // Local clinical summary fallback (ROUTINE triage, auto-generated token #TK-101 format)
     const localClinicalSummary = {
       patient_name: form.name || 'Patient',
@@ -299,15 +356,10 @@ export default function PatientKiosk() {
         exacerbating_relieving: 'Standard rest',
         severity: severity || 4,
       },
-      ayush_pariksha: {
-        prakriti: 'Kapha-Vata',
-        vikriti: 'Pranavaha Srotas',
-        dominant_dosha: 'Kapha',
-        recommended_therapy: 'Rest, warm fluids, standard OPD physician evaluation',
-      },
+      ayush_pariksha: ayushParikshaResolved,
       extracted_records: { medications: [], abnormal_labs: [] },
       soap_note: {
-        subjective: `Patient (${form.name || 'Unknown'}, ${form.age || '-'}/${form.gender || '-'}) presents with ${symptoms || 'Breathing difficulty'}.${transcript ? ` Voice note: ${transcript}` : ''}`,
+        subjective: `Patient (${form.name || 'Unknown'}, ${form.age || '-'}/${form.gender || '-'}) presents with ${symptoms || 'Breathing difficulty'}.${transcript ? ` Voice note: ${transcript}` : ''}${clinicalMode.id === 'AYUSH' ? ` Prakriti: ${ayushParikshaResolved.prakriti}, Agni: ${ayushParikshaResolved.agni}.` : ''}`,
         objective: 'Stable outpatient digital intake presentation. Ambulatory, non-emergent.',
         assessment: `Routine assessment for ${symptoms || 'Breathing difficulty'}. Rule out acute exacerbation.`,
         plan: '1. General OPD physician consultation\n2. Baseline vitals at triage desk\n3. Symptomatic therapy as prescribed',
@@ -321,9 +373,12 @@ export default function PatientKiosk() {
       const fullTranscript = [
         `Patient: ${form.name}, Age: ${form.age}, Gender: ${form.gender}`,
         form.abha ? `ABHA: ${form.abha}` : '',
+        `Clinical Mode: ${clinicalMode.label}`,
         `Symptom areas: ${selectedZones.join(', ') || 'Not specified'}`,
         severity ? `Severity: ${severity}/10` : '',
         transcript ? `Voice: ${transcript}` : '',
+        clinicalMode.id === 'AYUSH' ? `Prakriti: ${ayushParikshaResolved.prakriti}, Agni: ${ayushParikshaResolved.agni}, Koshtha: ${ayushParikshaResolved.koshtha}` : '',
+        clinicalMode.id === 'AYUSH' ? `Diet: ${ayushParikshaResolved.ahara_shakti}, Sleep: ${ayushParikshaResolved.vihara}` : '',
       ].filter(Boolean).join('\n')
 
       // 1. Wrap Gemini AI summary call with a strict 3-second timeout (Promise.race)
@@ -411,7 +466,8 @@ export default function PatientKiosk() {
     setForm({ name: '', age: '', gender: '', abha: '' }); setConsentGiven(false)
     setTranscript(''); setSelectedZones([]); setSeverity(null)
     setImagePreview(null); setImageBase64(null); setUploadedFile(null)
-    setFormErrors({})
+    setFormErrors({}); setAyushProfile({ prakriti: '', agni: '', koshtha: '', ahara: [], vihara: [] })
+    setScanning(false); setScanDone(false)
     setTokenNumber(`TK-${Math.floor(Math.random() * 50) + 101}`)
   }
 
@@ -561,6 +617,21 @@ export default function PatientKiosk() {
 
             {/* DPDP Consent */}
             <div className={`rounded-xl border-2 p-4 transition-colors ${consentGiven ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 bg-white'}`}>
+              {/* Audio readback button */}
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-1.5">
+                  <ShieldAlert className="w-4 h-4 text-emerald-600" />
+                  <span className="text-sm font-semibold text-slate-800">DPDP Act 2023 – Patient Data Consent</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); speakText(CONSENT_TEXT) }}
+                  className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 rounded-lg font-semibold transition-colors"
+                  title="Listen to consent terms"
+                >
+                  <Volume2 className="w-3.5 h-3.5" /> Listen to Consent Terms
+                </button>
+              </div>
               <button
                 onClick={() => {
                   setConsentGiven((v) => !v)
@@ -573,16 +644,9 @@ export default function PatientKiosk() {
                     ? <CheckCircle2 className="w-6 h-6 text-emerald-600" />
                     : <div className="w-5 h-5 rounded-md border-2 border-slate-400" />}
                 </span>
-                <div>
-                  <div className="flex items-center gap-2 mb-1.5">
-                    <ShieldAlert className="w-4 h-4 text-emerald-600" />
-                    <span className="text-sm font-semibold text-slate-800">DPDP Act 2023 - Patient Data Consent</span>
-                  </div>
-                  <p className="text-xs text-slate-600 leading-relaxed">
-                    I consent to my voice transcript and uploaded documents being temporarily processed by AI for OPD clinical intake under the{' '}
-                    <strong>Digital Personal Data Protection Act 2023</strong>. This data is used only for this consultation, is not shared with third parties, and is purged upon session completion.
-                  </p>
-                </div>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  {CONSENT_TEXT}
+                </p>
               </button>
               {formErrors.consent && (
                 <p className="text-xs text-rose-500 mt-2 flex items-center gap-1 ml-9">
@@ -593,18 +657,184 @@ export default function PatientKiosk() {
           </div>
         )}
 
+
         {/* --------------------- STEP 2: Symptom Intake --------------------- */}
         {step === 2 && (
           <div className="animate-fade-in space-y-5">
-            <div>
-              <h2 className="text-2xl font-bold text-slate-900 mb-1">Clinical History & Symptom Entry</h2>
-              <p className="text-slate-500 text-sm">Select presenting complaint area(s), then speak or type clinical history</p>
+            <div className="flex items-start justify-between">
+              <div>
+                <h2 className="text-2xl font-bold text-slate-900 mb-1">
+                  {clinicalMode.id === 'AYUSH' ? 'Dashavidha Pariksha – Self Assessment' : 'Clinical History & Symptom Entry'}
+                </h2>
+                <p className="text-slate-500 text-sm">
+                  {clinicalMode.id === 'AYUSH'
+                    ? 'Select your Prakriti and digestive constitution for the AIIA Ayurveda OPD'
+                    : 'Select presenting complaint area(s), then speak or type clinical history'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => speakText(clinicalMode.id === 'AYUSH'
+                  ? 'Please select your body constitution, digestion type, bowel type, dietary habits and sleep pattern.'
+                  : 'Select the area of your body where you feel discomfort. Then speak or type your symptoms.'
+                )}
+                className="flex-shrink-0 p-2 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 transition-colors mt-1"
+                title="Read instructions aloud"
+              >
+                <Volume2 className="w-4 h-4" />
+              </button>
             </div>
 
-            {/* Body zone grid */}
+            {/* ---- AYUSH MODE: Dashavidha Pariksha tactile cards ---- */}
+            {clinicalMode.id === 'AYUSH' && (
+              <div className="space-y-5">
+                {/* Prakriti */}
+                <div>
+                  <p className="text-xs font-bold text-amber-700 uppercase tracking-wider mb-2.5">
+                    Prakriti (Body Constitution)
+                  </p>
+                  <div className="grid grid-cols-3 gap-2.5">
+                    {AYUSH_PRAKRITI.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => setAyushProfile((prev) => ({ ...prev, prakriti: p.id }))}
+                        className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border-2 font-semibold text-sm transition-all active:scale-95 ${
+                          ayushProfile.prakriti === p.id
+                            ? p.color === 'sky' ? 'border-sky-500 bg-sky-50 text-sky-800'
+                              : p.color === 'amber' ? 'border-amber-500 bg-amber-50 text-amber-800'
+                              : 'border-emerald-500 bg-emerald-50 text-emerald-800'
+                            : 'border-slate-200 bg-white text-slate-700 hover:border-slate-400'
+                        }`}
+                      >
+                        <span className="text-base">{p.id === 'VATA' ? '🍃' : p.id === 'PITTA' ? '🔥' : '💧'}</span>
+                        <span>{p.label}</span>
+                        <span className="text-[10px] font-normal text-slate-500 text-center leading-tight">{p.desc}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Agni */}
+                <div>
+                  <p className="text-xs font-bold text-amber-700 uppercase tracking-wider mb-2.5">
+                    Agni / Digestion Type
+                  </p>
+                  <div className="grid grid-cols-3 gap-2.5">
+                    {AYUSH_AGNI.map((a) => (
+                      <button
+                        key={a.id}
+                        type="button"
+                        onClick={() => setAyushProfile((prev) => ({ ...prev, agni: a.id }))}
+                        className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border-2 font-semibold text-sm transition-all active:scale-95 ${
+                          ayushProfile.agni === a.id
+                            ? a.color === 'sky' ? 'border-sky-500 bg-sky-50 text-sky-800'
+                              : a.color === 'amber' ? 'border-amber-500 bg-amber-50 text-amber-800'
+                              : 'border-emerald-500 bg-emerald-50 text-emerald-800'
+                            : 'border-slate-200 bg-white text-slate-700 hover:border-slate-400'
+                        }`}
+                      >
+                        <span className="text-base">{a.id === 'MANDA' ? '🐢' : a.id === 'TIKSHNA' ? '⚡' : '✅'}</span>
+                        <span>{a.label}</span>
+                        <span className="text-[10px] font-normal text-slate-500 text-center leading-tight">{a.desc}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Koshtha */}
+                <div>
+                  <p className="text-xs font-bold text-amber-700 uppercase tracking-wider mb-2.5">
+                    Koshtha / Bowel Habit
+                  </p>
+                  <div className="grid grid-cols-3 gap-2.5">
+                    {AYUSH_KOSHTHA.map((k) => (
+                      <button
+                        key={k.id}
+                        type="button"
+                        onClick={() => setAyushProfile((prev) => ({ ...prev, koshtha: k.id }))}
+                        className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border-2 font-semibold text-sm transition-all active:scale-95 ${
+                          ayushProfile.koshtha === k.id
+                            ? k.color === 'rose' ? 'border-rose-500 bg-rose-50 text-rose-800'
+                              : k.color === 'amber' ? 'border-amber-500 bg-amber-50 text-amber-800'
+                              : 'border-emerald-500 bg-emerald-50 text-emerald-800'
+                            : 'border-slate-200 bg-white text-slate-700 hover:border-slate-400'
+                        }`}
+                      >
+                        <span className="text-base">{k.id === 'KRURA' ? '🪨' : k.id === 'MRIDU' ? '💦' : '⚖️'}</span>
+                        <span>{k.label}</span>
+                        <span className="text-[10px] font-normal text-slate-500 text-center leading-tight">{k.desc}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Ahara-Vihara */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-xs font-bold text-amber-700 uppercase tracking-wider mb-2">
+                      Ahara (Diet Preference)
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {AYUSH_AHARA.map((item) => (
+                        <button
+                          key={item}
+                          type="button"
+                          onClick={() => setAyushProfile((prev) => ({
+                            ...prev,
+                            ahara: prev.ahara.includes(item)
+                              ? prev.ahara.filter((x) => x !== item)
+                              : [...prev.ahara, item]
+                          }))}
+                          className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all active:scale-95 ${
+                            ayushProfile.ahara.includes(item)
+                              ? 'bg-amber-500 border-amber-500 text-white'
+                              : 'bg-white border-slate-200 text-slate-600 hover:border-amber-400'
+                          }`}
+                        >
+                          {item}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-amber-700 uppercase tracking-wider mb-2">
+                      Vihara (Sleep Pattern)
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {AYUSH_VIHARA.map((item) => (
+                        <button
+                          key={item}
+                          type="button"
+                          onClick={() => setAyushProfile((prev) => ({
+                            ...prev,
+                            vihara: prev.vihara.includes(item)
+                              ? prev.vihara.filter((x) => x !== item)
+                              : [...prev.vihara, item]
+                          }))}
+                          className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all active:scale-95 ${
+                            ayushProfile.vihara.includes(item)
+                              ? 'bg-sky-600 border-sky-600 text-white'
+                              : 'bg-white border-slate-200 text-slate-600 hover:border-sky-400'
+                          }`}
+                        >
+                          {item}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800">
+                  <strong>AIIA Protocol:</strong> Dashavidha Pariksha is a self-reportable constitutional assessment. Final Dosha determination will be confirmed by the attending Ayurveda physician.
+                </div>
+              </div>
+            )}
+
+            {/* ---- Body zone grid (always shown in Allopathic, also available in Ayush for symptom localization) ---- */}
             <div>
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2.5">
-                Select Presenting Complaint Area (tap all that apply)
+                {clinicalMode.id === 'AYUSH' ? 'Symptom Localization (Dosha aggravation site):' : 'Select Presenting Complaint Area (tap all that apply)'}
               </p>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 {BODY_ZONES.map((zone) => (
@@ -793,28 +1023,94 @@ export default function PatientKiosk() {
                 {compressing ? (
                   <div className="flex items-center justify-center h-48 gap-3 text-slate-500">
                     <RefreshCw className="w-6 h-6 animate-spin text-emerald-600" />
-                    <span className="text-sm">Compressing...</span>
+                    <span className="text-sm">Compressing image...</span>
                   </div>
                 ) : (
                   <>
-                    <div className="relative">
+                    {/* Image with scanning beam overlay */}
+                    <div className="relative overflow-hidden">
                       <img src={imagePreview} alt="Document preview" className="w-full max-h-64 object-contain bg-slate-50" />
+                      {scanning && (
+                        <div
+                          className="absolute left-0 right-0 h-1 bg-emerald-400 opacity-80 shadow-[0_0_16px_4px_rgba(52,211,153,0.7)] z-10"
+                          style={{
+                            top: 0,
+                            animation: 'scanBeam 2s linear forwards',
+                          }}
+                        />
+                      )}
+                      {scanning && (
+                        <div className="absolute inset-0 bg-emerald-500/10 flex items-center justify-center z-5">
+                          <div className="bg-white/90 rounded-lg px-4 py-2 flex items-center gap-2 shadow-lg">
+                            <RefreshCw className="w-4 h-4 text-emerald-600 animate-spin" />
+                            <span className="text-xs font-semibold text-emerald-800">AI Document Scan in progress...</span>
+                          </div>
+                        </div>
+                      )}
                       <button
-                        onClick={() => { setImagePreview(null); setImageBase64(null); setUploadedFile(null) }}
-                        className="absolute top-2 right-2 w-8 h-8 bg-slate-900/70 text-white rounded-full flex items-center justify-center hover:bg-slate-900 transition-colors"
+                        onClick={() => { setImagePreview(null); setImageBase64(null); setUploadedFile(null); setScanDone(false); setScanning(false) }}
+                        className="absolute top-2 right-2 w-8 h-8 bg-slate-900/70 text-white rounded-full flex items-center justify-center hover:bg-slate-900 transition-colors z-20"
                       >
                         <X className="w-4 h-4" />
                       </button>
                     </div>
-                    <div className="p-4 flex items-center justify-between">
+                    <style>{`
+                      @keyframes scanBeam {
+                        from { top: 0%; }
+                        to { top: 95%; }
+                      }
+                    `}</style>
+
+                    <div className="p-4 flex items-center justify-between border-b border-slate-100">
                       <div>
                         <p className="text-sm font-semibold text-slate-700">{uploadedFile?.name || 'Document'}</p>
-                        <p className="text-xs text-slate-400">Compressed - ready for AI extraction</p>
+                        <p className="text-xs text-slate-400">
+                          {scanning ? 'Scanning...' : scanDone ? 'AI extraction complete' : 'Compressed - ready for AI extraction'}
+                        </p>
                       </div>
-                      <span className="flex items-center gap-1.5 text-xs text-emerald-600 font-semibold bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-200">
-                        <CheckCircle2 className="w-3.5 h-3.5" /> Ready
+                      <span className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full border ${
+                        scanning ? 'bg-amber-50 text-amber-700 border-amber-200 animate-pulse'
+                        : scanDone ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : 'bg-slate-50 text-slate-600 border-slate-200'
+                      }`}>
+                        {scanning ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Scanning</> : scanDone ? <><CheckCircle2 className="w-3.5 h-3.5" /> Extracted</> : <><UploadCloud className="w-3.5 h-3.5" /> Ready</>}
                       </span>
                     </div>
+
+                    {/* Mock extracted entities (shown after scan completes) */}
+                    {scanDone && (
+                      <div className="p-4 space-y-4">
+                        <div>
+                          <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Extracted Medications</p>
+                          <div className="space-y-1.5">
+                            {[
+                              { name: 'Metformin', dose: '500mg', freq: '1-0-1' },
+                              { name: 'Amlodipine', dose: '5mg', freq: '0-0-1' },
+                              { name: 'Atorvastatin', dose: '40mg', freq: '0-0-1' },
+                            ].map((m) => (
+                              <div key={m.name} className="flex items-center gap-2 px-3 py-2 bg-blue-50 border border-blue-100 rounded-lg">
+                                <Activity className="w-3 h-3 text-blue-600 flex-shrink-0" />
+                                <span className="text-xs font-bold text-blue-900">{m.name}</span>
+                                <span className="text-xs bg-blue-200 text-blue-800 px-1.5 py-0.5 rounded font-mono">{m.dose}</span>
+                                <span className="text-xs text-blue-700">{m.freq}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        <div>
+                          <p className="text-xs font-bold text-rose-600 uppercase tracking-wider mb-2">Abnormal Lab Values</p>
+                          <div className="flex flex-wrap gap-2">
+                            <span className="flex items-center gap-1.5 px-2.5 py-1.5 bg-rose-100 border border-rose-300 text-rose-800 rounded-lg text-xs font-bold">
+                              <AlertTriangle className="w-3 h-3" /> FBS 218 mg/dL — HIGH
+                            </span>
+                            <span className="flex items-center gap-1.5 px-2.5 py-1.5 bg-amber-100 border border-amber-300 text-amber-800 rounded-lg text-xs font-bold">
+                              <AlertTriangle className="w-3 h-3" /> HbA1c 8.9% — CRITICAL
+                            </span>
+                          </div>
+                        </div>
+                        <p className="text-[10px] text-slate-400 italic">* AI-extracted preview. Physician will verify during consultation.</p>
+                      </div>
+                    )}
                   </>
                 )}
               </div>
@@ -827,9 +1123,10 @@ export default function PatientKiosk() {
               </p>
             </div>
 
-            <p className="text-center text-sm text-slate-400">This step is optional - skip if no documents available</p>
+            <p className="text-center text-sm text-slate-400">This step is optional – skip if no documents available</p>
           </div>
         )}
+
 
         {/* --------------------- STEP 4: Review & Submit --------------------- */}
         {step === 4 && !submitted && (
@@ -901,20 +1198,41 @@ export default function PatientKiosk() {
         {/* --------------------- SUCCESS: OPD Token Card --------------------- */}
         {(submitted || step === 5) && (
           <div className="animate-fade-in text-center space-y-5">
+            {/* Pulsing RED FLAG emergency banner */}
             {clinicalResult?.red_flag_detected && (
-              <div className="p-4 bg-rose-600 text-white rounded-xl flex items-start gap-3">
-                <AlertTriangle className="w-7 h-7 flex-shrink-0 animate-pulse" />
-                <div className="text-left">
-                  <p className="font-bold text-base">EMERGENCY DETECTED</p>
-                  <p className="text-sm opacity-90">{clinicalResult?.red_flag_reason}</p>
-                  <p className="text-xs opacity-75 mt-0.5">Please proceed to Emergency Bay immediately.</p>
+              <div className="p-4 bg-rose-600 text-white rounded-xl border-2 border-rose-700 animate-pulse flex items-start gap-3">
+                <AlertTriangle className="w-7 h-7 flex-shrink-0" />
+                <div className="text-left flex-1">
+                  <p className="font-black text-base tracking-wide">🚨 RED FLAG: Immediate Triage Required</p>
+                  <p className="text-sm font-semibold opacity-95 mt-0.5">Priority Casualty Escalation – DO NOT WAIT IN OPD SEATING</p>
+                  {clinicalResult?.red_flag_reason && (
+                    <p className="text-xs opacity-80 mt-1">{clinicalResult.red_flag_reason}</p>
+                  )}
+                  <p className="text-xs opacity-75 mt-1 font-medium">Proceed directly to the Emergency Triage Bay with this token.</p>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => speakText('Red flag emergency detected. Please proceed immediately to the Emergency Triage Bay. Do not wait in the OPD seating area.')}
+                  className="flex-shrink-0 p-1.5 rounded-lg bg-white/20 hover:bg-white/30 transition-colors"
+                >
+                  <Volume2 className="w-4 h-4" />
+                </button>
               </div>
             )}
 
             <div className="bg-white rounded-3xl shadow-2xl border-2 border-slate-100 p-8">
-              <div className="w-16 h-16 rounded-full bg-emerald-600 flex items-center justify-center mx-auto mb-4">
-                <CheckCircle2 className="w-9 h-9 text-white" />
+              <div className="flex items-center justify-center gap-3 mb-4">
+                <div className="w-16 h-16 rounded-full bg-emerald-600 flex items-center justify-center">
+                  <CheckCircle2 className="w-9 h-9 text-white" />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => speakText(`Registration successful. Your OPD token is ${tokenNumber}. Please wait in the OPD seating area.`)}
+                  className="p-2.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 transition-colors"
+                  title="Read token number aloud"
+                >
+                  <Volume2 className="w-5 h-5" />
+                </button>
               </div>
               <h3 className="text-xl font-bold text-slate-900 mb-1">Registration Successful!</h3>
               <p className="text-sm text-slate-500 mb-6">Your OPD token has been issued</p>
@@ -952,9 +1270,17 @@ export default function PatientKiosk() {
                 </div>
               </div>
 
-              <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-left">
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-left mb-4">
                 <p className="text-xs font-semibold text-blue-700 mb-0.5">AI Summary:</p>
                 <p className="text-xs text-blue-800 leading-relaxed">{clinicalResult?.chief_complaint || 'Routine outpatient clinical intake recorded.'}</p>
+              </div>
+
+              {/* DPDP Session Purge Notice */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-left flex items-start gap-2">
+                <ShieldAlert className="w-4 h-4 text-slate-400 flex-shrink-0 mt-0.5" />
+                <p className="text-[10px] text-slate-500 leading-relaxed">
+                  <strong className="text-slate-600">DPDP Act 2023 – Session Data Purged.</strong> Your voice transcript and uploaded documents have been cleared from this kiosk session. Only the de-identified clinical summary has been forwarded to the physician console.
+                </p>
               </div>
             </div>
 
@@ -964,6 +1290,7 @@ export default function PatientKiosk() {
             </button>
           </div>
         )}
+
 
         {/* ---------------- Navigation buttons ---------------- */}
         {!submitted && step < 5 && (
