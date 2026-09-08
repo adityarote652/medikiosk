@@ -666,7 +666,7 @@ export default function DoctorConsole() {
                   <div className="flex items-center gap-2">
                     <Activity className="w-4 h-4 text-blue-600" />
                     <span className="text-sm font-bold text-slate-800">
-                      {p.clinical_mode === 'AYUSH' ? 'Dashavidha Pariksha (Ayurvedic)' : 'SOCRATES Pain Analysis'}
+                      {p.clinical_mode === 'AYUSH' ? 'Ayurvedic Constitution & Pariksha Profile (AIIA Protocol)' : 'SOCRATES Pain Analysis'}
                     </span>
                   </div>
                   <ChevronRight className={`w-4 h-4 text-slate-400 transform transition-transform ${expanded.clinical ? 'rotate-90' : ''}`} />
