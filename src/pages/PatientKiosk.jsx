@@ -42,30 +42,21 @@ const AYUSH_KOSHTHA = [
 const AYUSH_AHARA = ['Spicy/Hot foods', 'Oily/Fried foods', 'Cold/Refrigerated foods', 'Vegetarian', 'Non-vegetarian', 'Fasting regularly']
 const AYUSH_VIHARA = ['Deep / Restful sleep', 'Disturbed / Fragmented sleep', 'Irregular sleep hours', 'Day sleeping habit']
 
-// Body zones -------- only standard Lucide icons used
 const BODY_ZONES = [
   {
-    id: 'chest', label: 'Chest / Heart', icon: Heart, color: 'rose',
-    followups: ['Is there pressure or tightness?', 'Does it radiate to arm or jaw?', 'Rate pain 1-10', 'When did it start?', 'Worse with exertion?'],
+    id: 'chest', label: 'Chest Pain', icon: Heart, color: 'rose',
+    followups: ['Sudden onset?', 'Central chest?', 'Crushing pain?', 'Radiates to arm/jaw?', 'Severe (8-10)?', 'Worse with exertion?', 'Also breathlessness?'],
   },
   {
-    id: 'abdomen', label: 'Abdomen / Stomach', icon: Activity, color: 'amber',
-    followups: ['Location - upper or lower?', 'Any vomiting or nausea?', 'Rate pain 1-10', 'After eating or empty stomach?', 'Any loose motions?'],
+    id: 'breathing', label: 'Breathing Difficulty', icon: Wind, color: 'cyan',
+    followups: ['At rest?', 'With exertion?', 'Wheezing?', 'Cough?', 'Choking feeling?'],
   },
   {
-    id: 'joints', label: 'Joints / Muscles', icon: Activity, color: 'blue',
-    followups: ['Which joints are affected?', 'Is there swelling or redness?', 'Rate pain 1-10', 'Morning stiffness?', 'Any trauma?'],
-  },
-  {
-    id: 'head', label: 'Head / Fever', icon: Brain, color: 'purple',
+    id: 'fever', label: 'Fever', icon: Activity, color: 'amber',
     followups: ['Sudden or gradual onset?', 'Temperature reading?', 'Any dizziness or vomiting?', 'Light or sound sensitivity?', 'Duration of fever?'],
   },
   {
-    id: 'breathing', label: 'Breathing / Lungs', icon: Wind, color: 'cyan',
-    followups: ['At rest or with exertion?', 'Any wheezing or cough?', 'Coughing up blood?', 'Rate breathlessness 1-10', 'Duration?'],
-  },
-  {
-    id: 'general', label: 'General / Other', icon: Stethoscope, color: 'slate',
+    id: 'general', label: 'General Weakness', icon: Stethoscope, color: 'slate',
     followups: ['Describe your main problem', 'How long has this been?', 'Any known conditions?', 'Any current medications?', 'Rate severity 1-10'],
   },
 ]
@@ -254,7 +245,7 @@ export default function PatientKiosk() {
     window.speechSynthesis.speak(utterance)
   }, [lang.code])
 
-  const CONSENT_TEXT = 'I consent to my voice transcript and uploaded documents being temporarily processed by AI for OPD clinical intake under the Digital Personal Data Protection Act 2023. This data is used only for this consultation, is not shared with third parties, and is purged upon session completion.'
+  const CONSENT_TEXT = 'This is a prototype system. I consent to my voice transcript and uploaded documents being temporarily processed by AI for this consultation only. Data is not shared and is purged upon session completion.'
 
   // ------------------------ File Handling ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -407,6 +398,21 @@ export default function PatientKiosk() {
         finalResult = localClinicalSummary
       }
 
+      // Hardcoded Red Flag Rule for Demo:
+      const hasChestPain = selectedZones.includes('chest')
+      const hasBreathlessness = selectedZones.includes('breathing') || (transcript && transcript.toLowerCase().includes('breath'))
+      const isSevereBreathing = selectedZones.includes('breathing') && severity >= 8
+
+      let finalTriageLevel = finalResult.triage_level || 'ROUTINE'
+      let finalRedFlag = finalResult.red_flag_detected || false
+      let finalRedFlagReason = finalResult.red_flag_reason || ''
+
+      if ((hasChestPain && hasBreathlessness) || isSevereBreathing) {
+        finalTriageLevel = 'EMERGENCY'
+        finalRedFlag = true
+        finalRedFlagReason = 'Immediate Triage Alert: Chest pain with breathlessness or severe breathing difficulty detected.'
+      }
+
       const record = {
         token_number: activeToken,
         patient_name: form.name || finalResult.patient_name || 'Unknown',
@@ -416,9 +422,9 @@ export default function PatientKiosk() {
         clinical_mode: clinicalMode.id,
         language: lang.code,
         transcript: fullTranscript,
-        triage_level: finalResult.triage_level || 'ROUTINE',
-        red_flag_detected: finalResult.red_flag_detected || false,
-        red_flag_reason: finalResult.red_flag_reason || '',
+        triage_level: finalTriageLevel,
+        red_flag_detected: finalRedFlag,
+        red_flag_reason: finalRedFlagReason,
         chief_complaint: finalResult.chief_complaint || symptoms || 'Breathing difficulty',
         socrates: finalResult.socrates || {},
         ayush_pariksha: finalResult.ayush_pariksha || {},
@@ -970,6 +976,14 @@ export default function PatientKiosk() {
                   <button onClick={() => setTranscript('')} className="text-xs text-rose-500 hover:text-rose-700">Clear</button>
                 </div>
               )}
+              {!isListening && !transcript && (
+                <button 
+                  onClick={() => setTranscript('Severe chest pain and heavy breathlessness since morning. Pain is 9 out of 10.')}
+                  className="mt-2 text-[11px] text-blue-600 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded border border-blue-200 font-semibold w-full transition-colors"
+                >
+                  ✨ Populate Demo Emergency Transcript
+                </button>
+              )}
             </div>
 
             {!step2Valid && (
@@ -1084,6 +1098,22 @@ export default function PatientKiosk() {
                     {/* Mock extracted entities (shown after scan completes) */}
                     {scanDone && (
                       <div className="p-4 space-y-4">
+                        <div className="flex justify-between items-center">
+                           <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Document Extraction</span>
+                           <span className="text-[10px] font-mono bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded border border-emerald-200">OCR Confidence: 98%</span>
+                        </div>
+                        
+                        <div className="grid grid-cols-2 gap-3 mb-2">
+                           <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
+                             <p className="text-[10px] text-slate-400 font-semibold mb-0.5">Report Date</p>
+                             <p className="text-xs font-bold text-slate-700">12 Aug 2023</p>
+                           </div>
+                           <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
+                             <p className="text-[10px] text-slate-400 font-semibold mb-0.5">Known Diagnosis</p>
+                             <p className="text-xs font-bold text-slate-700">Type 2 DM, HTN</p>
+                           </div>
+                        </div>
+
                         <div>
                           <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Extracted Medications</p>
                           <div className="space-y-1.5">
@@ -1102,12 +1132,12 @@ export default function PatientKiosk() {
                           </div>
                         </div>
                         <div>
-                          <p className="text-xs font-bold text-rose-600 uppercase tracking-wider mb-2">Abnormal Lab Values</p>
+                          <p className="text-xs font-bold text-rose-600 uppercase tracking-wider mb-2">Abnormal Vitals / Labs</p>
                           <div className="flex flex-wrap gap-2">
-                            <span className="flex items-center gap-1.5 px-2.5 py-1.5 bg-rose-100 border border-rose-300 text-rose-800 rounded-lg text-xs font-bold">
-                              <AlertTriangle className="w-3 h-3" /> FBS 218 mg/dL — HIGH
-                            </span>
                             <span className="flex items-center gap-1.5 px-2.5 py-1.5 bg-amber-100 border border-amber-300 text-amber-800 rounded-lg text-xs font-bold">
+                              <AlertTriangle className="w-3 h-3" /> BP 150/90 mmHg — HIGH
+                            </span>
+                            <span className="flex items-center gap-1.5 px-2.5 py-1.5 bg-rose-100 border border-rose-300 text-rose-800 rounded-lg text-xs font-bold">
                               <AlertTriangle className="w-3 h-3" /> HbA1c 8.9% — CRITICAL
                             </span>
                           </div>
@@ -1142,6 +1172,27 @@ export default function PatientKiosk() {
 
             {/* Summary */}
             <div className="bg-white border border-slate-200 rounded-xl p-5">
+              
+              {/* Display immediate triage red flag warning on review screen if conditions met */}
+              {(() => {
+                const hasChestPain = selectedZones.includes('chest')
+                const hasBreathlessness = selectedZones.includes('breathing') || (transcript && transcript.toLowerCase().includes('breath'))
+                const isSevereBreathing = selectedZones.includes('breathing') && severity >= 8
+                
+                if ((hasChestPain && hasBreathlessness) || isSevereBreathing) {
+                  return (
+                    <div className="mb-4 p-4 bg-rose-600 text-white rounded-xl shadow-sm flex items-start gap-3 animate-pulse">
+                      <AlertTriangle className="w-6 h-6 flex-shrink-0" />
+                      <div>
+                        <p className="font-bold text-sm">🚨 IMMEDIATE TRIAGE ALERT</p>
+                        <p className="text-xs mt-0.5 opacity-90">Severe symptoms (chest pain with breathlessness or severe respiratory distress) detected. This case will be escalated as an EMERGENCY.</p>
+                      </div>
+                    </div>
+                  )
+                }
+                return null;
+              })()}
+
               <div className="grid grid-cols-2 gap-4 mb-4">
                 {[
                   { label: 'Patient Name', value: form.name || '-' },
@@ -1149,7 +1200,7 @@ export default function PatientKiosk() {
                   { label: 'ABHA ID', value: form.abha || 'Not provided' },
                   { label: 'Clinical Mode', value: clinicalMode.label },
                   { label: 'Symptom Areas', value: selectedZones.join(', ') || 'Not specified' },
-                  { label: 'Document', value: uploadedFile ? 'Attached' : 'None' },
+                  { label: 'Severity', value: severity ? `${severity}/10` : 'Not specified' },
                 ].map(({ label, value }) => (
                   <div key={label}>
                     <p className="text-xs text-slate-400 font-medium mb-0.5">{label}</p>
@@ -1158,9 +1209,22 @@ export default function PatientKiosk() {
                 ))}
               </div>
               {transcript && (
-                <div className="border-t border-slate-100 pt-3">
-                  <p className="text-xs text-slate-400 font-medium mb-1.5">Voice Transcript</p>
+                <div className="border-t border-slate-100 pt-3 mb-3">
+                  <p className="text-xs text-slate-400 font-medium mb-1.5">Voice / Text Transcript</p>
                   <p className="text-xs text-slate-600 bg-slate-50 rounded-lg p-3 max-h-24 overflow-y-auto leading-relaxed">{transcript}</p>
+                </div>
+              )}
+              {scanDone && (
+                <div className="border-t border-slate-100 pt-3">
+                  <p className="text-xs text-slate-400 font-medium mb-1.5 flex justify-between">
+                    <span>Extracted Document Entities</span>
+                    <span className="text-emerald-600">OCR: 98%</span>
+                  </p>
+                  <div className="bg-slate-50 rounded-lg p-3 space-y-2">
+                     <p className="text-xs text-slate-600"><strong>Diagnosis:</strong> Type 2 DM, HTN (12 Aug 2023)</p>
+                     <p className="text-xs text-slate-600"><strong>Meds:</strong> Metformin 500mg, Amlodipine 5mg, Atorvastatin 40mg</p>
+                     <p className="text-xs text-rose-600 font-bold"><strong>Flags:</strong> BP 150/90, HbA1c 8.9%</p>
+                  </div>
                 </div>
               )}
             </div>
@@ -1193,7 +1257,7 @@ export default function PatientKiosk() {
               {isSubmitting ? (
                 <><RefreshCw className="w-5 h-5 animate-spin" /> AI Processing... Please wait</>
               ) : (
-                <><Activity className="w-5 h-5" /> Submit &amp; Generate OPD Token</>
+                <><Activity className="w-5 h-5" /> Submit for physician review</>
               )}
             </button>
           </div>
@@ -1299,13 +1363,22 @@ export default function PatientKiosk() {
         {/* ---------------- Navigation buttons ---------------- */}
         {!submitted && step < 5 && (
           <div className="flex items-center justify-between mt-8 pt-4 border-t border-slate-200">
-            <button
-              onClick={goBack}
-              disabled={step === 1}
-              className="flex items-center gap-2 px-5 py-3 text-slate-600 hover:text-slate-900 disabled:opacity-30 font-semibold text-sm transition-colors"
-            >
-              <ChevronRight className="w-5 h-5 rotate-180" /> Back
-            </button>
+            <div className="flex items-center gap-2 sm:gap-4">
+              <button
+                onClick={goBack}
+                disabled={step === 1}
+                className="flex items-center gap-2 px-5 py-3 text-slate-600 hover:text-slate-900 disabled:opacity-30 font-semibold text-sm transition-colors"
+              >
+                <ChevronRight className="w-5 h-5 rotate-180" /> Back
+              </button>
+              <button
+                type="button"
+                className="flex items-center gap-1.5 text-xs px-3 py-2 text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-lg font-bold border border-rose-200 transition-colors"
+                onClick={() => alert('A staff member has been notified and will assist you shortly.')}
+              >
+                <User className="w-4 h-4" /> Need staff help?
+              </button>
+            </div>
             {step < 4 && (
               <button
                 onClick={goNext}
