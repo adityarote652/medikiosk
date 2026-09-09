@@ -109,11 +109,18 @@ export default function PatientKiosk() {
   const [clinicalMode, setClinicalMode] = useState(CLINICAL_MODES[0])
   const [clock, setClock] = useState(new Date())
 
-  // ---------------- Step 1: Identity
+  // ---------------- Step 1: Identity method selection
+  // 'select' = initial card screen | 'abha' | 'mobile' | 'new'
+  const [idMethod, setIdMethod] = useState('select')
+  const [mobile, setMobile]     = useState('')
+  const [otpValue, setOtpValue] = useState('')
+  const [otpSent, setOtpSent]   = useState(false)
+  const [otpVerified, setOtpVerified] = useState(false)
+  const [otpError, setOtpError] = useState('')
+
   const [form, setForm] = useState({ name: '', age: '', gender: '', abha: '' })
   const [consentGiven, setConsentGiven] = useState(false)
   const [formErrors, setFormErrors] = useState({})
-  const [abhaWarning, setAbhaWarning] = useState('')
 
   // ---------------- Step 2: Guided Interview
   const [guidedNode, setGuidedNode] = useState('root')
@@ -265,6 +272,16 @@ export default function PatientKiosk() {
   // ------------------------ Validation ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
   const validateStep1 = () => {
+    // Block if user hasn't chosen an identity method yet
+    if (idMethod === 'select') {
+      setFormErrors({ _method: 'Please choose an identity option to continue.' })
+      return false
+    }
+    // Block mobile path if OTP not verified
+    if (idMethod === 'mobile' && !otpVerified) {
+      setOtpError('Please verify your mobile number to continue.')
+      return false
+    }
     const errs = {}
     if (!form.name.trim() || form.name.trim().length < 2) errs.name = t('Full name required (min 2 characters)')
     const ageNum = parseInt(form.age)
@@ -470,14 +487,46 @@ export default function PatientKiosk() {
   const resetForm = () => {
     setStep(1); setSubmitted(false); setClinicalResult(null); setSubmitError('')
     setForm({ name: '', age: '', gender: '', abha: '' }); setConsentGiven(false)
-    setTranscript(''); setSelectedZones([]); setSeverity(null)
-    setImagePreview(null); setImageBase64(null); setUploadedFile(null)
+    setTranscript(''); setImagePreview(null); setImageBase64(null); setUploadedFile(null)
     setFormErrors({}); setAyushProfile({ prakriti: '', agni: '', koshtha: '', ahara: [], vihara: [] })
     setScanning(false); setScanDone(false)
     setTokenNumber(`TK-${Math.floor(Math.random() * 50) + 101}`)
+    // Reset identity method selector
+    setIdMethod('select'); setMobile(''); setOtpValue(''); setOtpSent(false)
+    setOtpVerified(false); setOtpError('')
+    setGuidedNode('root'); setGuidedAnswers({}); setGuidedStack([])
   }
 
   // ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  // Reusable DPDP consent block (used in all three identity paths)
+  function ConsentBlock({ consentGiven, setConsentGiven, setFormErrors, formErrors, t, speakText }) {
+    return (
+      <div className={`rounded-xl border-2 p-4 transition-colors ${consentGiven ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 bg-white'}`}>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-1.5">
+            <ShieldAlert className="w-4 h-4 text-emerald-600" />
+            <span className="text-sm font-semibold text-slate-800">{t('Prototype Disclaimer')}</span>
+          </div>
+          <button type="button" onClick={() => speakText(t('CONSENT_TEXT'))}
+            className="p-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-slate-500 transition-colors">
+            <Volume2 className="w-4 h-4" />
+          </button>
+        </div>
+        <button onClick={() => { setConsentGiven(v => !v); setFormErrors(prev => ({ ...prev, consent: undefined })) }}
+          className="flex items-start gap-3 w-full text-left">
+          <span className="flex-shrink-0 mt-0.5">
+            {consentGiven ? <CheckCircle2 className="w-6 h-6 text-emerald-600" /> : <div className="w-5 h-5 rounded-md border-2 border-slate-400" />}
+          </span>
+          <p className="text-xs text-slate-600 leading-relaxed">{t('CONSENT_TEXT')}</p>
+        </button>
+        {formErrors.consent && (
+          <p className="text-xs text-rose-500 mt-2 flex items-center gap-1 ml-9">
+            <AlertTriangle className="w-3 h-3" /> {formErrors.consent}
+          </p>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col pb-16">
@@ -554,124 +603,308 @@ export default function PatientKiosk() {
       <main className="flex-1 max-w-2xl mx-auto w-full px-4 py-6">
         <StepIndicator currentStep={submitted || step === 5 ? 4 : step} labels={STEP_LABELS.map(l => t(l))} />
 
-        {/* --------------------- STEP 1: Identity & DPDP Consent --------------------- */}
+        {/* --------------------- STEP 1: Identity & Consent --------------------- */}
         {step === 1 && (
           <div className="animate-fade-in space-y-5">
-            <div>
-              <h2 className="text-2xl font-bold text-slate-900 mb-1">{t('Patient Identity Verification')}</h2>
-              <p className="text-slate-500 text-sm">{t('Enter verified details to begin Central OPD registration')}</p>
+
+            {/* Patient-facing consultation note */}
+            <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 flex items-start gap-2.5">
+              <ShieldAlert className="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0" />
+              <p className="text-xs text-blue-800 leading-relaxed">
+                Your information is collected for this consultation and will be reviewed by a clinician. Data is not shared externally and is purged after session completion.
+              </p>
             </div>
 
-            {/* Name */}
-            <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-1.5">
-                {t('Full Name')} <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-                placeholder={t('Enter your full name')}
-                className={`w-full px-4 py-3.5 text-base border-2 rounded-xl outline-none transition-colors ${formErrors.name ? 'border-rose-400 bg-rose-50' : 'border-slate-200 bg-white focus:border-emerald-500'}`}
-              />
-              {formErrors.name && <p className="text-xs text-rose-500 mt-1">{formErrors.name}</p>}
-            </div>
-
-            {/* Age + Gender */}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1.5">
-                  {t('Age')} <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="number" min={0} max={120}
-                  value={form.age}
-                  onChange={(e) => setForm({ ...form, age: e.target.value })}
-                  placeholder={t('Years')}
-                  className={`w-full px-4 py-3.5 text-base border-2 rounded-xl outline-none transition-colors ${formErrors.age ? 'border-rose-400 bg-rose-50' : 'border-slate-200 bg-white focus:border-emerald-500'}`}
-                />
-                {formErrors.age && <p className="text-xs text-rose-500 mt-1">{formErrors.age}</p>}
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1.5">
-                  {t('Gender')} <span className="text-rose-500">*</span>
-                </label>
-                <select
-                  value={form.gender}
-                  onChange={(e) => setForm({ ...form, gender: e.target.value })}
-                  className={`w-full px-4 py-3.5 text-base border-2 rounded-xl outline-none transition-colors appearance-none bg-white ${formErrors.gender ? 'border-rose-400 bg-rose-50' : 'border-slate-200 focus:border-emerald-500'}`}
-                >
-                  <option value="">{t('Select Gender')}</option>
-                  <option value="Male">{t('Male')}</option>
-                  <option value="Female">{t('Female')}</option>
-                  <option value="Other">{t('Other')}</option>
-                </select>
-                {formErrors.gender && <p className="text-xs text-rose-500 mt-1">{formErrors.gender}</p>}
-              </div>
-            </div>
-
-            {/* ABHA ID */}
-            <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-1.5">
-                {t('ABHA Health ID')}
-                <span className="ml-2 text-xs font-normal text-slate-400">({t('Optional - speeds up checkout')})</span>
-              </label>
-              <input
-                type="text"
-                value={form.abha}
-                onChange={(e) => {
-                  const v = e.target.value.toUpperCase()
-                  setForm({ ...form, abha: v })
-                  setAbhaWarning(v && !ABHA_REGEX.test(v) ? t('Format: ABHA-XX-XXXX-XXXX-XXXX') : '')
-                }}
-                placeholder="ABHA-14-1234-5678-9012"
-                className={`w-full px-4 py-3.5 text-base border-2 rounded-xl font-mono outline-none transition-colors ${abhaWarning || formErrors.abha ? 'border-amber-400 bg-amber-50' : 'border-slate-200 bg-white focus:border-emerald-500'}`}
-              />
-              {(abhaWarning || formErrors.abha) && (
-                <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
-                  <AlertTriangle className="w-3 h-3" /> {abhaWarning || formErrors.abha}
-                </p>
-              )}
-            </div>
-
-            {/* DPDP Consent */}
-            <div className={`rounded-xl border-2 p-4 transition-colors ${consentGiven ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 bg-white'}`}>
-              {/* Audio readback button */}
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-1.5">
-                  <ShieldAlert className="w-4 h-4 text-emerald-600" />
-                  <span className="text-sm font-semibold text-slate-800">{t('Prototype Disclaimer')}</span>
+            {/* ── Sub-step: Method Selection ── */}
+            {idMethod === 'select' && (
+              <div className="space-y-4">
+                <div>
+                  <h2 className="text-2xl font-bold text-slate-900 mb-1">{t('Patient Identity Verification')}</h2>
+                  <p className="text-slate-500 text-sm">Choose how you would like to identify yourself to begin registration.</p>
                 </div>
+
+                {/* ABHA Card */}
                 <button
-                  type="button"
-                  onClick={() => speakText(t('CONSENT_TEXT'))}
-                  className="p-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-slate-500 transition-colors"
+                  onClick={() => setIdMethod('abha')}
+                  className="w-full flex items-center gap-4 p-4 rounded-xl border-2 border-slate-200 bg-white hover:border-emerald-400 hover:bg-emerald-50 transition-all active:scale-[0.98] text-left"
+                  style={{ minHeight: '76px' }}
                 >
-                  <Volume2 className="w-4 h-4" />
+                  <div className="w-12 h-12 rounded-xl bg-emerald-100 flex items-center justify-center flex-shrink-0 text-emerald-700 font-black text-sm">
+                    ABHA
+                  </div>
+                  <div className="flex-1">
+                    <p className="font-bold text-slate-900 text-base">Continue with ABHA ID</p>
+                    <p className="text-xs text-slate-500">Ayushman Bharat Health Account number</p>
+                  </div>
+                  <ChevronRight className="w-5 h-5 text-slate-400 flex-shrink-0" />
+                </button>
+
+                {/* Mobile OTP Card */}
+                <button
+                  onClick={() => setIdMethod('mobile')}
+                  className="w-full flex items-center gap-4 p-4 rounded-xl border-2 border-slate-200 bg-white hover:border-blue-400 hover:bg-blue-50 transition-all active:scale-[0.98] text-left"
+                  style={{ minHeight: '76px' }}
+                >
+                  <div className="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center flex-shrink-0">
+                    <Activity className="w-6 h-6 text-blue-700" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="font-bold text-slate-900 text-base">Continue with Mobile Number</p>
+                    <p className="text-xs text-slate-500">Receive a one-time verification code</p>
+                  </div>
+                  <ChevronRight className="w-5 h-5 text-slate-400 flex-shrink-0" />
+                </button>
+
+                {/* New Patient Card */}
+                <button
+                  onClick={() => setIdMethod('new')}
+                  className="w-full flex items-center gap-4 p-4 rounded-xl border-2 border-slate-200 bg-white hover:border-slate-400 hover:bg-slate-50 transition-all active:scale-[0.98] text-left"
+                  style={{ minHeight: '76px' }}
+                >
+                  <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center flex-shrink-0">
+                    <User className="w-6 h-6 text-slate-600" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="font-bold text-slate-900 text-base">Register as New Patient</p>
+                    <p className="text-xs text-slate-500">First visit — fill in your basic details</p>
+                  </div>
+                  <ChevronRight className="w-5 h-5 text-slate-400 flex-shrink-0" />
                 </button>
               </div>
-              <button
-                onClick={() => {
-                  setConsentGiven((v) => !v)
-                  setFormErrors((prev) => ({ ...prev, consent: undefined }))
-                }}
-                className="flex items-start gap-3 w-full text-left"
-              >
-                <span className="flex-shrink-0 mt-0.5">
-                  {consentGiven
-                    ? <CheckCircle2 className="w-6 h-6 text-emerald-600" />
-                    : <div className="w-5 h-5 rounded-md border-2 border-slate-400" />}
-                </span>
-                <p className="text-xs text-slate-600 leading-relaxed">
-                  {t('CONSENT_TEXT')}
-                </p>
-              </button>
-              {formErrors.consent && (
-                <p className="text-xs text-rose-500 mt-2 flex items-center gap-1 ml-9">
-                  <AlertTriangle className="w-3 h-3" /> {formErrors.consent}
-                </p>
-              )}
-            </div>
+            )}
+
+            {/* ── Sub-step: ABHA Path ── */}
+            {idMethod === 'abha' && (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setIdMethod('select')} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500">
+                    <ChevronRight className="w-4 h-4 rotate-180" />
+                  </button>
+                  <div>
+                    <h2 className="text-xl font-bold text-slate-900">Continue with ABHA ID</h2>
+                    <p className="text-xs text-amber-700 font-medium mt-0.5">⚠ Prototype — format validation only. No live ABDM API call.</p>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                    {t('ABHA Health ID')} <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={form.abha}
+                    onChange={(e) => {
+                      const v = e.target.value.toUpperCase()
+                      setForm({ ...form, abha: v })
+                      setFormErrors(prev => ({ ...prev, abha: v && !ABHA_REGEX.test(v) ? t('Format: ABHA-XX-XXXX-XXXX-XXXX') : undefined }))
+                    }}
+                    placeholder="ABHA-14-1234-5678-9012"
+                    className={`w-full px-4 py-3.5 text-base border-2 rounded-xl font-mono outline-none transition-colors ${formErrors.abha ? 'border-amber-400 bg-amber-50' : 'border-slate-200 bg-white focus:border-emerald-500'}`}
+                  />
+                  {formErrors.abha && (
+                    <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3" /> {formErrors.abha}
+                    </p>
+                  )}
+                </div>
+
+                {/* Name / Age / Gender */}
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">{t('Full Name')} <span className="text-rose-500">*</span></label>
+                  <input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
+                    placeholder={t('Enter your full name')}
+                    className={`w-full px-4 py-3.5 text-base border-2 rounded-xl outline-none transition-colors ${formErrors.name ? 'border-rose-400 bg-rose-50' : 'border-slate-200 bg-white focus:border-emerald-500'}`} />
+                  {formErrors.name && <p className="text-xs text-rose-500 mt-1">{formErrors.name}</p>}
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1.5">{t('Age')} <span className="text-rose-500">*</span></label>
+                    <input type="number" min={0} max={120} value={form.age} onChange={(e) => setForm({ ...form, age: e.target.value })}
+                      placeholder={t('Years')}
+                      className={`w-full px-4 py-3.5 text-base border-2 rounded-xl outline-none transition-colors ${formErrors.age ? 'border-rose-400 bg-rose-50' : 'border-slate-200 bg-white focus:border-emerald-500'}`} />
+                    {formErrors.age && <p className="text-xs text-rose-500 mt-1">{formErrors.age}</p>}
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1.5">{t('Gender')} <span className="text-rose-500">*</span></label>
+                    <select value={form.gender} onChange={(e) => setForm({ ...form, gender: e.target.value })}
+                      className={`w-full px-4 py-3.5 text-base border-2 rounded-xl outline-none transition-colors appearance-none bg-white ${formErrors.gender ? 'border-rose-400 bg-rose-50' : 'border-slate-200 focus:border-emerald-500'}`}>
+                      <option value="">{t('Select Gender')}</option>
+                      <option value="Male">{t('Male')}</option>
+                      <option value="Female">{t('Female')}</option>
+                      <option value="Other">{t('Other')}</option>
+                    </select>
+                    {formErrors.gender && <p className="text-xs text-rose-500 mt-1">{formErrors.gender}</p>}
+                  </div>
+                </div>
+
+                {/* Consent */}
+                {ConsentBlock({ consentGiven, setConsentGiven, setFormErrors, formErrors, t, speakText })}
+              </div>
+            )}
+
+            {/* ── Sub-step: Mobile OTP Path ── */}
+            {idMethod === 'mobile' && (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2">
+                  <button onClick={() => { setIdMethod('select'); setOtpSent(false); setOtpVerified(false); setOtpError('') }}
+                    className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500">
+                    <ChevronRight className="w-4 h-4 rotate-180" />
+                  </button>
+                  <div>
+                    <h2 className="text-xl font-bold text-slate-900">Continue with Mobile Number</h2>
+                    <p className="text-xs text-amber-700 font-medium mt-0.5">⚠ Simulated OTP — no real SMS sent. Use code <strong>1234</strong> to verify.</p>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Mobile Number <span className="text-rose-500">*</span></label>
+                  <div className="flex gap-2">
+                    <span className="flex items-center px-3 bg-slate-100 border-2 border-slate-200 rounded-xl text-sm font-medium text-slate-600">+91</span>
+                    <input type="tel" maxLength={10} value={mobile} onChange={(e) => setMobile(e.target.value.replace(/\D/g, ''))}
+                      placeholder="10-digit mobile number"
+                      disabled={otpSent}
+                      className="flex-1 px-4 py-3.5 text-base border-2 border-slate-200 bg-white rounded-xl outline-none focus:border-emerald-500 transition-colors disabled:bg-slate-50" />
+                    {!otpSent && (
+                      <button
+                        onClick={() => { if (mobile.length === 10) { setOtpSent(true); setOtpError('') } else setOtpError('Enter a valid 10-digit number') }}
+                        className="px-4 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-semibold text-sm whitespace-nowrap transition-colors"
+                      >Send OTP</button>
+                    )}
+                  </div>
+                  {otpError && <p className="text-xs text-rose-500 mt-1">{otpError}</p>}
+                </div>
+
+                {otpSent && !otpVerified && (
+                  <div className="rounded-xl border-2 border-blue-200 bg-blue-50 p-4 space-y-3">
+                    <p className="text-sm font-semibold text-blue-900">OTP sent to +91 {mobile}</p>
+                    <p className="text-xs text-blue-700">Demo OTP: <strong>1234</strong> (Simulated — no real SMS sent)</p>
+                    <div className="flex gap-2">
+                      <input type="text" maxLength={4} value={otpValue} onChange={(e) => setOtpValue(e.target.value.replace(/\D/g, ''))}
+                        placeholder="Enter 4-digit OTP"
+                        className="flex-1 px-4 py-3 text-base border-2 border-blue-300 bg-white rounded-xl font-mono outline-none focus:border-blue-500 transition-colors tracking-widest text-center" />
+                      <button
+                        onClick={() => {
+                          if (otpValue === '1234') { setOtpVerified(true); setOtpError('') }
+                          else setOtpError('Incorrect OTP. Use 1234 for this demo.')
+                        }}
+                        className="px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-semibold text-sm transition-colors"
+                      >Verify</button>
+                    </div>
+                    {otpError && <p className="text-xs text-rose-500">{otpError}</p>}
+                  </div>
+                )}
+
+                {otpVerified && (
+                  <div className="rounded-xl border-2 border-emerald-300 bg-emerald-50 p-3 flex items-center gap-2">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+                    <p className="text-sm font-semibold text-emerald-800">Mobile verified — +91 {mobile}</p>
+                  </div>
+                )}
+
+                {/* Name / Age / Gender — shown once OTP verified */}
+                {otpVerified && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700 mb-1.5">{t('Full Name')} <span className="text-rose-500">*</span></label>
+                      <input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
+                        placeholder={t('Enter your full name')}
+                        className={`w-full px-4 py-3.5 text-base border-2 rounded-xl outline-none transition-colors ${formErrors.name ? 'border-rose-400 bg-rose-50' : 'border-slate-200 bg-white focus:border-emerald-500'}`} />
+                      {formErrors.name && <p className="text-xs text-rose-500 mt-1">{formErrors.name}</p>}
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-sm font-semibold text-slate-700 mb-1.5">{t('Age')} <span className="text-rose-500">*</span></label>
+                        <input type="number" min={0} max={120} value={form.age} onChange={(e) => setForm({ ...form, age: e.target.value })}
+                          placeholder={t('Years')}
+                          className={`w-full px-4 py-3.5 text-base border-2 rounded-xl outline-none transition-colors ${formErrors.age ? 'border-rose-400 bg-rose-50' : 'border-slate-200 bg-white focus:border-emerald-500'}`} />
+                        {formErrors.age && <p className="text-xs text-rose-500 mt-1">{formErrors.age}</p>}
+                      </div>
+                      <div>
+                        <label className="block text-sm font-semibold text-slate-700 mb-1.5">{t('Gender')} <span className="text-rose-500">*</span></label>
+                        <select value={form.gender} onChange={(e) => setForm({ ...form, gender: e.target.value })}
+                          className={`w-full px-4 py-3.5 text-base border-2 rounded-xl outline-none transition-colors appearance-none bg-white ${formErrors.gender ? 'border-rose-400 bg-rose-50' : 'border-slate-200 focus:border-emerald-500'}`}>
+                          <option value="">{t('Select Gender')}</option>
+                          <option value="Male">{t('Male')}</option>
+                          <option value="Female">{t('Female')}</option>
+                          <option value="Other">{t('Other')}</option>
+                        </select>
+                        {formErrors.gender && <p className="text-xs text-rose-500 mt-1">{formErrors.gender}</p>}
+                      </div>
+                    </div>
+                    {ConsentBlock({ consentGiven, setConsentGiven, setFormErrors, formErrors, t, speakText })}
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* ── Sub-step: New Patient Path ── */}
+            {idMethod === 'new' && (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setIdMethod('select')} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500">
+                    <ChevronRight className="w-4 h-4 rotate-180" />
+                  </button>
+                  <div>
+                    <h2 className="text-xl font-bold text-slate-900">Register as New Patient</h2>
+                    <p className="text-slate-500 text-sm">{t('Enter verified details to begin Central OPD registration')}</p>
+                  </div>
+                </div>
+
+                {/* Name */}
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">{t('Full Name')} <span className="text-rose-500">*</span></label>
+                  <input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
+                    placeholder={t('Enter your full name')}
+                    className={`w-full px-4 py-3.5 text-base border-2 rounded-xl outline-none transition-colors ${formErrors.name ? 'border-rose-400 bg-rose-50' : 'border-slate-200 bg-white focus:border-emerald-500'}`} />
+                  {formErrors.name && <p className="text-xs text-rose-500 mt-1">{formErrors.name}</p>}
+                </div>
+
+                {/* Age + Gender */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1.5">{t('Age')} <span className="text-rose-500">*</span></label>
+                    <input type="number" min={0} max={120} value={form.age} onChange={(e) => setForm({ ...form, age: e.target.value })}
+                      placeholder={t('Years')}
+                      className={`w-full px-4 py-3.5 text-base border-2 rounded-xl outline-none transition-colors ${formErrors.age ? 'border-rose-400 bg-rose-50' : 'border-slate-200 bg-white focus:border-emerald-500'}`} />
+                    {formErrors.age && <p className="text-xs text-rose-500 mt-1">{formErrors.age}</p>}
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1.5">{t('Gender')} <span className="text-rose-500">*</span></label>
+                    <select value={form.gender} onChange={(e) => setForm({ ...form, gender: e.target.value })}
+                      className={`w-full px-4 py-3.5 text-base border-2 rounded-xl outline-none transition-colors appearance-none bg-white ${formErrors.gender ? 'border-rose-400 bg-rose-50' : 'border-slate-200 focus:border-emerald-500'}`}>
+                      <option value="">{t('Select Gender')}</option>
+                      <option value="Male">{t('Male')}</option>
+                      <option value="Female">{t('Female')}</option>
+                      <option value="Other">{t('Other')}</option>
+                    </select>
+                    {formErrors.gender && <p className="text-xs text-rose-500 mt-1">{formErrors.gender}</p>}
+                  </div>
+                </div>
+
+                {/* Optional ABHA */}
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                    {t('ABHA Health ID')}
+                    <span className="ml-2 text-xs font-normal text-slate-400">({t('Optional - speeds up checkout')})</span>
+                  </label>
+                  <input type="text" value={form.abha}
+                    onChange={(e) => {
+                      const v = e.target.value.toUpperCase()
+                      setForm({ ...form, abha: v })
+                      setFormErrors(prev => ({ ...prev, abha: v && !ABHA_REGEX.test(v) ? t('Format: ABHA-XX-XXXX-XXXX-XXXX') : undefined }))
+                    }}
+                    placeholder="ABHA-14-1234-5678-9012"
+                    className={`w-full px-4 py-3.5 text-base border-2 rounded-xl font-mono outline-none transition-colors ${formErrors.abha ? 'border-amber-400 bg-amber-50' : 'border-slate-200 bg-white focus:border-emerald-500'}`} />
+                  {formErrors.abha && (
+                    <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3" /> {formErrors.abha}
+                    </p>
+                  )}
+                </div>
+
+                {ConsentBlock({ consentGiven, setConsentGiven, setFormErrors, formErrors, t, speakText })}
+              </div>
+            )}
           </div>
         )}
 
