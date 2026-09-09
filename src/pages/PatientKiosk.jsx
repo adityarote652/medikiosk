@@ -6,7 +6,7 @@ import {
 } from 'lucide-react'
 import { processClinicalIntake, compressImageToBase64, getGenerativeModel } from '../lib/gemini'
 import { addPatientIntake } from '../lib/firebase'
-import { TRANSLATIONS, GUIDED_FLOW } from '../lib/kioskTranslations'
+import { TRANSLATIONS, GUIDED_FLOW, AYUSH_GUIDED_FLOW } from '../lib/kioskTranslations'
 import StepIndicator from '../components/StepIndicator'
 import WaveVisualizer from '../components/WaveVisualizer'
 
@@ -140,6 +140,12 @@ export default function PatientKiosk() {
 
   // ---------------- Step 2: Ayush Dashavidha profile
   const [ayushProfile, setAyushProfile] = useState({ prakriti: '', agni: '', koshtha: '', ahara: [], vihara: [] })
+
+  useEffect(() => {
+    setGuidedNode(clinicalMode.id === 'AYUSH' ? 'ayush_root' : 'root')
+    setGuidedAnswers({})
+    setGuidedStack([])
+  }, [clinicalMode.id])
 
   // ---------------- Step 3: Documents
   const [uploadedFile, setUploadedFile] = useState(null)
@@ -278,22 +284,26 @@ export default function PatientKiosk() {
       return false
     }
     // Block mobile path if OTP not verified
-    if (idMethod === 'mobile' && !otpVerified) {
-      setOtpError('Please verify your mobile number to continue.')
-      return false
-    }
-    const errs = {}
-    if (!form.name.trim() || form.name.trim().length < 2) errs.name = t('Full name required (min 2 characters)')
-    const ageNum = parseInt(form.age)
-    if (!form.age || isNaN(ageNum) || ageNum < 0 || ageNum > 120) errs.age = t('Valid age (0-120) required')
-    if (!form.gender) errs.gender = t('Please select gender')
-    if (form.abha && !ABHA_REGEX.test(form.abha)) errs.abha = t('Format: ABHA-XX-XXXX-XXXX-XXXX')
-    if (!consentGiven) errs.consent = t('DPDP consent is required to proceed')
-    setFormErrors(errs)
-    return Object.keys(errs).length === 0
+    const err = {}
+    if (idMethod === 'select') err.general = 'Please select how you want to continue'
+    if (idMethod === 'mobile' && !otpVerified) err.mobile = 'Mobile number verification required'
+    if (form.name.length < 2) err.name = t('Full name required (min 2 characters)')
+    if (!form.age || isNaN(form.age) || form.age < 0 || form.age > 120) err.age = t('Valid age (0-120) required')
+    if (!form.gender) err.gender = t('Please select gender')
+    if (form.abha && !ABHA_REGEX.test(form.abha)) err.abha = t('Format: ABHA-XX-XXXX-XXXX-XXXX')
+    if (!consentGiven) err.consent = t('DPDP consent is required to proceed')
+    setFormErrors(err)
+    return Object.keys(err).length === 0
   }
 
-  const step2Valid = guidedNode === null || transcript.trim().length > 3
+  const step2Valid = () => {
+    // Both text and guided flow must be fully satisfied if possible
+    if (guidedNode !== null) {
+      setSpeechError(t('Please answer the question or skip.'))
+      return false
+    }
+    return transcript.trim().length > 0 || Object.keys(guidedAnswers).length > 0
+  }
 
   // ------------------------ Navigation ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -404,8 +414,8 @@ export default function PatientKiosk() {
       const chiefComplaint = guidedAnswers?.chief_complaint || ''
       const breathlessness = guidedAnswers?.breathlessness === 'Yes'
       const severityStr = guidedAnswers?.severity || ''
-      const hasChestPain = chiefComplaint === 'Chest Pain' || finalTranscript.toLowerCase().includes('chest pain')
-      const hasBreathlessness = breathlessness || finalTranscript.toLowerCase().includes('breath')
+      const hasChestPain = chiefComplaint === 'Chest Pain' || fullTranscript.toLowerCase().includes('chest pain')
+      const hasBreathlessness = breathlessness || fullTranscript.toLowerCase().includes('breath')
       const isSevereBreathing = chiefComplaint === 'Breathing Difficulty' && severityStr.includes('Cannot speak in full sentences')
 
       let finalTriageLevel = finalResult.triage_level || 'ROUTINE'
@@ -922,36 +932,50 @@ export default function PatientKiosk() {
             </div>
 
             {/* Guided Flow UI */}
-            {guidedNode !== null && GUIDED_FLOW[guidedNode] ? (
+            {guidedNode !== null && (clinicalMode.id === 'AYUSH' ? AYUSH_GUIDED_FLOW : GUIDED_FLOW)[guidedNode] ? (() => {
+              const CURRENT_FLOW = clinicalMode.id === 'AYUSH' ? AYUSH_GUIDED_FLOW : GUIDED_FLOW;
+              const nodeData = CURRENT_FLOW[guidedNode];
+              return (
               <div className="bg-slate-50 rounded-2xl p-5 border border-slate-200">
                 <div className="flex justify-between items-center mb-4">
                   <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
                     {t('Question')} {guidedStack.length + 1}
                   </span>
-                  {guidedStack.length > 0 && (
-                    <button onClick={() => {
-                      const prevNode = guidedStack[guidedStack.length - 1];
-                      setGuidedStack(prev => prev.slice(0, -1));
-                      setGuidedNode(prevNode);
-                    }} className="text-xs font-semibold text-blue-600 px-3 py-1 bg-blue-50 hover:bg-blue-100 rounded-lg">
-                      ← {t('Back')}
+                  <div className="flex gap-2 items-center">
+                    <button 
+                      onClick={() => speakText(nodeData.q[lang.short] || nodeData.q.EN)} 
+                      className="text-xs font-semibold text-emerald-700 px-3 py-1 bg-emerald-50 hover:bg-emerald-100 rounded-lg flex items-center gap-1"
+                    >
+                      <Volume2 className="w-3 h-3" /> {t('Repeat question')}
                     </button>
-                  )}
+                    {guidedStack.length > 0 && (
+                      <button onClick={() => {
+                        const prevNode = guidedStack[guidedStack.length - 1];
+                        setGuidedStack(prev => prev.slice(0, -1));
+                        setGuidedNode(prevNode);
+                      }} className="text-xs font-semibold text-blue-600 px-3 py-1 bg-blue-50 hover:bg-blue-100 rounded-lg">
+                        ← {t('Back')}
+                      </button>
+                    )}
+                  </div>
                 </div>
                 
                 <h3 className="text-xl font-bold text-slate-800 mb-6 leading-tight">
-                  {GUIDED_FLOW[guidedNode].q[lang.short] || GUIDED_FLOW[guidedNode].q.EN}
+                  {nodeData.q[lang.short] || nodeData.q.EN}
                 </h3>
                 
                 <div className="grid gap-3">
-                  {GUIDED_FLOW[guidedNode].options.map((opt, i) => (
+                  {nodeData.options.map((opt, i) => (
                     <button
                       key={i}
                       onClick={() => {
-                        setGuidedAnswers(prev => ({ ...prev, [GUIDED_FLOW[guidedNode].key]: opt.val }))
+                        setGuidedAnswers(prev => ({ ...prev, [nodeData.key]: opt.val }))
                         if (opt.next) {
                           setGuidedStack(prev => [...prev, guidedNode])
                           setGuidedNode(opt.next)
+                        } else if (nodeData.next) {
+                          setGuidedStack(prev => [...prev, guidedNode])
+                          setGuidedNode(nodeData.next)
                         } else {
                           setGuidedNode(null) // End of flow
                         }
@@ -964,11 +988,13 @@ export default function PatientKiosk() {
                   ))}
                   <button
                     onClick={() => {
-                      setGuidedAnswers(prev => ({ ...prev, [GUIDED_FLOW[guidedNode].key]: 'Not known / Skipped' }))
-                      const opt = GUIDED_FLOW[guidedNode].options[0]
-                      if (opt && opt.next) {
+                      setGuidedAnswers(prev => ({ ...prev, [nodeData.key]: 'Not known / Skipped' }))
+                      if (nodeData.next) {
                         setGuidedStack(prev => [...prev, guidedNode])
-                        setGuidedNode(opt.next)
+                        setGuidedNode(nodeData.next)
+                      } else if (nodeData.options[0]?.next) {
+                        setGuidedStack(prev => [...prev, guidedNode])
+                        setGuidedNode(nodeData.options[0].next)
                       } else {
                         setGuidedNode(null)
                       }
@@ -979,10 +1005,11 @@ export default function PatientKiosk() {
                   </button>
                 </div>
               </div>
-            ) : (
+              )
+            })() : (
               <div className="bg-emerald-50 border-2 border-emerald-200 rounded-2xl p-6 text-center">
                 <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto mb-3" />
-                <h3 className="text-lg font-bold text-emerald-800">{t('Pre-consultation information gathering, not diagnosis.')} Complete</h3>
+                <h3 className="text-lg font-bold text-emerald-800">{t('Interview complete')}</h3>
               </div>
             )}
 

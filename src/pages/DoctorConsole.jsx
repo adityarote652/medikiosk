@@ -406,7 +406,7 @@ function FHIRModal({ patient, onClose }) {
           <div>
             <div className="flex items-center gap-2">
               <ShieldAlert className="w-5 h-5 text-blue-600" />
-              <span className="font-bold text-slate-900 text-base">ABDM / FHIR R4 Bundle</span>
+              <span className="font-bold text-slate-900 text-base">FHIR-ready Data Model (Prototype)</span>
             </div>
             <p className="text-xs text-slate-500 mt-0.5">Auto-generated FHIR mapping for {patient.patient_name} ({formatToken(patient.token_number)})</p>
           </div>
@@ -422,7 +422,7 @@ function FHIRModal({ patient, onClose }) {
         </div>
         <div className="px-5 py-4 border-t border-slate-100 bg-slate-50 flex-shrink-0">
           <p className="text-[10px] text-slate-400">
-            ⚕ ABDM Compliance — This bundle maps to HL7 FHIR R4. Final submission requires physician EHR commit and ABHA-linked health ID validation.
+            ⚕ ABDM Vision — This prototype demonstrates capability to generate HL7 FHIR R4 payloads. Live integration requires official M1/M2 API keys.
           </p>
         </div>
       </div>
@@ -617,7 +617,7 @@ export default function DoctorConsole() {
           <div className="px-3 py-2.5 border-b border-slate-100 flex flex-col gap-2 bg-slate-50">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">OPD Intake Queue</span>
-              <span className="text-xs font-mono text-slate-400">#TK-8042</span>
+              <span className="text-xs font-mono text-slate-400">{filteredPatients.length} Waiting</span>
             </div>
             
             {/* Search Bar */}
@@ -872,8 +872,18 @@ export default function DoctorConsole() {
                         ? <><RefreshCw className="w-4 h-4 animate-spin" /> Saving... </>
                         : p.status === 'COMPLETED'
                         ? <><CheckCircle2 className="w-4 h-4" /> Approved & Saved</>
-                        : <><CheckCircle2 className="w-4 h-4" /> Approve &amp; Save</>}
+                        : <><CheckCircle2 className="w-4 h-4" /> Approve & Save</>}
                     </button>
+
+                    {(p.triage_level === 'EMERGENCY' && p.status !== 'IN_PROGRESS' && p.status !== 'COMPLETED') && (
+                      <button
+                        onClick={() => saveSoap(p.soap_note || {})}
+                        className="flex items-center gap-2 px-4 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-sm font-bold rounded-xl transition-colors animate-pulse hover:animate-none"
+                      >
+                        <AlertTriangle className="w-4 h-4" />
+                        Acknowledge Emergency
+                      </button>
+                    )}
 
                     <button
                       onClick={focusSOAP}
