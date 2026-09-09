@@ -14,8 +14,8 @@ const FEATURES = [
   { icon: Activity,    label: 'AI-Powered Triage',          desc: 'Gemini 1.5 Flash auto-analyzes symptoms and flags emergency cases in real time', color: 'amber' },
   { icon: Activity,    label: 'Multilingual Voice',          desc: 'Native Web Speech API supporting Hindi, Marathi, and Indian English with live transcript streaming', color: 'blue' },
   { icon: Stethoscope, label: 'Dual Clinical Mode',          desc: 'Allopathic SOCRATES pain framework alongside Ayurvedic Dashavidha Pariksha', color: 'emerald' },
-  { icon: ShieldAlert, label: 'DPDP Act 2023 Ready',         desc: 'Explicit consent gate, session-scoped data, immutable audit log, and purge-on-completion — designed for DPDP compliance', color: 'violet' },
-  { icon: Heart,       label: 'ABDM-Ready Architecture',     desc: 'ABHA identifier field, FHIR-structured health record model, and ABDM integration architecture in place for live deployment', color: 'rose' },
+  { icon: ShieldAlert, label: 'DPDP Privacy Principles',         desc: 'Explicit consent gate, session-scoped data, immutable audit log, and purge-on-completion — designed reflecting DPDP principles', color: 'violet' },
+  { icon: Heart,       label: 'ABDM-Ready Architecture',     desc: 'ABHA identifier field, FHIR-structured health record model, and ABDM integration architecture mocked for live deployment', color: 'rose' },
   { icon: Activity,    label: 'Realtime Data Sync',          desc: 'Firebase Firestore with hybrid BroadcastChannel mesh sync for resilient local fallback', color: 'cyan' },
 ]
 

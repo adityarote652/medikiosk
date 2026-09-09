@@ -42,7 +42,7 @@ function fmtTime(iso) {
 function formatToken(tok) {
   if (!tok) return 'OPD-N/A'
   const s = String(tok)
-  return s.startsWith('TK-') || s.startsWith('OPD-') || s.startsWith('#') ? s : `OPD-${s}`
+  return s.startsWith('TK-') || s.startsWith('OPD-') || s.startsWith('#') ? s : `TK-${s}`
 }
 
 
