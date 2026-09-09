@@ -16,7 +16,7 @@ import EmergencyModal from '../components/EmergencyModal'
 function formatToken(tok) {
   if (!tok) return '?'
   const s = String(tok)
-  return s.startsWith('TK-') || s.startsWith('OPD-') || s.startsWith('#') ? s : `OPD-${s}`
+  return s.startsWith('TK-') || s.startsWith('OPD-') || s.startsWith('#') ? s : `TK-${s}`
 }
 
 function formatWait(createdAt) {
@@ -100,17 +100,61 @@ function PatientQueueCard({ patient, isSelected, onClick }) {
   )
 }
 
-// --------- SOCRATES Card ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// --------- Concise Clinical Summary ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-function SOCRATESCard({ socrates }) {
+function ConciseSummary({ patient }) {
+  const { chief_complaint, red_flag_detected, red_flag_reason, socrates, extracted_records } = patient
+  
+  const hasDocs = extracted_records?.medications?.length > 0 || extracted_records?.abnormal_labs?.length > 0
+  const meds = hasDocs ? extracted_records.medications.map(m => m.name).join(', ') : 'None documented'
+  const alerts = hasDocs ? extracted_records.abnormal_labs.map(l => `${l.parameter} ${l.flag}`).join(', ') : 'None'
+
+  return (
+    <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
+      <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Clinical Synopsis</h3>
+      <div className="grid grid-cols-2 gap-y-3 gap-x-4">
+        <div>
+          <p className="text-[10px] text-slate-400 font-semibold mb-0.5">Chief Complaint</p>
+          <p className="text-xs font-bold text-slate-800">{chief_complaint || 'Not specified'}</p>
+        </div>
+        <div>
+          <p className="text-[10px] text-slate-400 font-semibold mb-0.5">Relevant History / Site</p>
+          <p className="text-xs font-semibold text-slate-700">{socrates?.site || socrates?.character || 'No prior history provided'}</p>
+        </div>
+        <div>
+          <p className="text-[10px] text-slate-400 font-semibold mb-0.5">Medicines & Allergies</p>
+          <p className="text-xs font-semibold text-slate-700 truncate" title={meds}>{meds}</p>
+        </div>
+        <div>
+          <p className="text-[10px] text-slate-400 font-semibold mb-0.5">Document Findings</p>
+          <p className={`text-xs font-bold ${alerts !== 'None' ? 'text-amber-700' : 'text-slate-700'}`}>{alerts}</p>
+        </div>
+      </div>
+      {red_flag_detected && (
+        <div className="mt-3 p-2 bg-rose-100 rounded border border-rose-200 text-rose-800 text-[11px] font-bold flex items-center gap-1.5">
+          <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+          {red_flag_reason || 'Severe symptoms detected during intake.'}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// --------- Adaptive Symptom Assessment Card ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+function SymptomAssessmentCard({ socrates, chiefComplaint }) {
   if (!socrates || !Object.keys(socrates).length) {
-    return <p className="text-xs text-slate-400 italic">No SOCRATES data captured.</p>
+    return <p className="text-xs text-slate-400 italic">No structured symptom data captured.</p>
   }
+  
+  // Adaptive label replacement for non-pain cases (e.g. breathing difficulty)
+  const isBreathing = String(chiefComplaint || '').toLowerCase().includes('breath') || String(socrates.site || '').toLowerCase().includes('breath')
+  
   const fields = [
-    { key: 'site',                  label: 'Site' },
+    { key: 'site',                  label: isBreathing ? 'Primary Issue' : 'Site' },
     { key: 'onset',                 label: 'Onset' },
     { key: 'character',             label: 'Character' },
-    { key: 'radiation',             label: 'Radiation' },
+    { key: 'radiation',             label: isBreathing ? 'Progression' : 'Radiation' },
     { key: 'associated_symptoms',   label: 'Associated' },
     { key: 'timing',                label: 'Timing' },
     { key: 'exacerbating_relieving',label: 'Exac./Relieving' },
@@ -457,15 +501,40 @@ export default function DoctorConsole() {
     setCommitting(false)
   }
 
-  const markInProgress = async () => {
+  const markReturned = async () => {
     if (!selected?.id) return
-    await updatePatientStatus(selected.id, { status: 'IN_PROGRESS' })
-    setSelected(p => ({ ...p, status: 'IN_PROGRESS' }))
+    await updatePatientStatus(selected.id, { status: 'WAITING' })
+    setSelected(p => ({ ...p, status: 'WAITING' }))
+  }
+
+  const focusSOAP = () => {
+    setExpanded(p => ({ ...p, soap: true }))
+    // Small timeout to allow expand animation
+    setTimeout(() => {
+      document.getElementById('soap-editor-textarea')?.focus()
+    }, 100)
   }
 
   const toggle = (key) => setExpanded((p) => ({ ...p, [key]: !p[key] }))
 
-  const filteredPatients = patients
+  // Sort queue: EMERGENCY > URGENT > ROUTINE, then oldest first
+  const sortedPatients = [...patients].sort((a, b) => {
+    const pMap = { EMERGENCY: 3, URGENT: 2, ROUTINE: 1 }
+    const pA = pMap[a.triage_level] || 1
+    const pB = pMap[b.triage_level] || 1
+    if (pA !== pB) return pB - pA // Higher priority first
+    
+    // Fallback to oldest first (longest waiting)
+    const getMs = (dateObj) => {
+      if (!dateObj) return 0
+      if (typeof dateObj.toDate === 'function') return dateObj.toDate().getTime()
+      if (dateObj.seconds) return dateObj.seconds * 1000
+      return new Date(dateObj).getTime()
+    }
+    return getMs(a.created_at) - getMs(b.created_at) 
+  })
+
+  const filteredPatients = sortedPatients
     .filter(pt => {
       if (filterTab === 'ALL') return true
       if (filterTab === 'IN_PROGRESS') return pt.status === 'IN_PROGRESS'
@@ -658,11 +727,23 @@ export default function DoctorConsole() {
                     )}
                   </div>
                   <div className="text-right text-xs opacity-70 flex-shrink-0">
-                    <div className="font-mono mb-1">{p.created_at ? new Date(p.created_at).toLocaleTimeString('en-IN') : '-'}</div>
+                    <div className="font-mono mb-1">
+                      {(() => {
+                        if (!p.created_at) return '-'
+                        let dateObj
+                        if (typeof p.created_at.toDate === 'function') dateObj = p.created_at.toDate()
+                        else if (p.created_at.seconds) dateObj = new Date(p.created_at.seconds * 1000)
+                        else dateObj = new Date(p.created_at)
+                        return isNaN(dateObj) ? '-' : dateObj.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
+                      })()}
+                    </div>
                     <StatusPill status={p.status} />
                   </div>
                 </div>
               </div>
+
+              {/* ------ Concise Clinical Summary ------ */}
+              <ConciseSummary patient={p} />
 
               {/* ------ 2. Clinical Framework ------ */}
               <div className="bg-white border border-slate-200 rounded-xl shadow-clinical overflow-hidden">
@@ -670,7 +751,9 @@ export default function DoctorConsole() {
                   <div className="flex items-center gap-2">
                     <Activity className="w-4 h-4 text-blue-600" />
                     <span className="text-sm font-bold text-slate-800">
-                      {p.clinical_mode === 'AYUSH' ? 'Ayurvedic Constitution & Pariksha Profile (AIIA Protocol)' : 'SOCRATES Pain Analysis'}
+                      {p.clinical_mode === 'AYUSH' ? 'Ayurvedic Constitution & Pariksha Profile (AIIA Protocol)' 
+                        : (String(p.chief_complaint || '').toLowerCase().includes('breath') || String(p.socrates?.site || '').toLowerCase().includes('breath')) ? 'Breathing Assessment' 
+                        : 'SOCRATES Pain Assessment'}
                     </span>
                   </div>
                   <ChevronRight className={`w-4 h-4 text-slate-400 transform transition-transform ${expanded.clinical ? 'rotate-90' : ''}`} />
@@ -679,7 +762,7 @@ export default function DoctorConsole() {
                   <div className="px-4 pb-4">
                     {p.clinical_mode === 'AYUSH'
                       ? <AYUSHCard pariksha={p.ayush_pariksha} />
-                      : <SOCRATESCard socrates={p.socrates} />}
+                      : <SymptomAssessmentCard socrates={p.socrates} chiefComplaint={p.chief_complaint} />}
                   </div>
                 )}
               </div>
@@ -753,7 +836,7 @@ export default function DoctorConsole() {
                     <div className="mb-3 p-2.5 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-2 shadow-sm">
                       <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
                       <p className="text-xs text-amber-800 font-semibold tracking-wide">
-                        ⚠ AI Pre-Consultation Summary (Assistive Draft for Physician Verification)
+                        AI pre-consultation draft — physician verification required.
                       </p>
                     </div>
                     <SOAPEditor soapNote={p.soap_note} onSave={saveSoap} isSaving={soapSaving} />
@@ -761,53 +844,65 @@ export default function DoctorConsole() {
                 )}
               </div>
 
-              {/* ------ 5. Actions ------ */}
+              {/* ------ 5. Actions & Audit Indicator ------ */}
               <div className="bg-white border border-slate-200 rounded-xl shadow-clinical p-4">
-                <div className="flex items-center gap-3 flex-wrap">
-                  <button
-                    onClick={commitEHR}
-                    disabled={committing || p.status === 'COMPLETED'}
-                    className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white text-sm font-bold rounded-xl transition-colors"
-                  >
-                    {committing
-                      ? <><RefreshCw className="w-4 h-4 animate-spin" /> Committing---</>
-                      : p.status === 'COMPLETED'
-                      ? <><CheckCircle2 className="w-4 h-4" /> Committed to EHR</>
-                      : <><ShieldAlert className="w-4 h-4" /> Commit &amp; Sync to ABDM / EHR</>}
-                  </button>
-
-                  <button
-                    onClick={() => setShowFhirModal(true)}
-                    className="flex items-center gap-2 px-4 py-2.5 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 text-sm font-bold rounded-xl transition-colors"
-                  >
-                    <Activity className="w-4 h-4" />
-                    View ABDM / FHIR Bundle
-                  </button>
-
-                  <button
-                    onClick={() => printConsultationSlip(p)}
-                    className="flex items-center gap-2 px-5 py-2.5 bg-slate-700 hover:bg-slate-800 text-white text-sm font-bold rounded-xl transition-colors"
-                  >
-                    <ExternalLink className="w-4 h-4" />
-                    Print Consultation Slip
-                  </button>
-
-                  {p.status === 'WAITING' && (
-                    <button
-                      onClick={markInProgress}
-                      className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl transition-colors"
-                    >
-                      <Activity className="w-4 h-4" />
-                      Mark In Progress
-                    </button>
-                  )}
+                
+                {/* Audit Indicator */}
+                <div className="flex items-center gap-4 mb-5 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100 pb-4">
+                  <div className="flex items-center gap-1.5 text-emerald-600">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Consent Captured
+                  </div>
+                  <div className="flex items-center gap-1.5 text-emerald-600">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Intake Submitted
+                  </div>
+                  <div className={`flex items-center gap-1.5 ${p.status === 'COMPLETED' ? 'text-emerald-600' : 'text-amber-500'}`}>
+                    {p.status === 'COMPLETED' ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Clock className="w-3.5 h-3.5" />} 
+                    Physician Decision {p.status === 'COMPLETED' ? 'Recorded' : 'Pending'}
+                  </div>
                 </div>
 
-                {p.status === 'COMPLETED' && (
-                  <p className="text-xs text-emerald-600 mt-2 flex items-center gap-1">
-                    <CheckCircle2 className="w-3.5 h-3.5" /> Patient record committed. Session purge scheduled (DPDP compliant).
-                  </p>
-                )}
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={commitEHR}
+                      disabled={committing || p.status === 'COMPLETED'}
+                      className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white text-sm font-bold rounded-xl transition-colors"
+                    >
+                      {committing
+                        ? <><RefreshCw className="w-4 h-4 animate-spin" /> Saving... </>
+                        : p.status === 'COMPLETED'
+                        ? <><CheckCircle2 className="w-4 h-4" /> Approved & Saved</>
+                        : <><CheckCircle2 className="w-4 h-4" /> Approve &amp; Save</>}
+                    </button>
+
+                    <button
+                      onClick={focusSOAP}
+                      className="flex items-center gap-2 px-4 py-2.5 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 text-sm font-bold rounded-xl transition-colors"
+                    >
+                      <Activity className="w-4 h-4" />
+                      Edit SOAP
+                    </button>
+                    
+                    {p.status !== 'COMPLETED' && (
+                      <button
+                        onClick={markReturned}
+                        className="flex items-center gap-2 px-4 py-2.5 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-700 text-sm font-semibold rounded-xl transition-colors"
+                      >
+                        <RefreshCw className="w-4 h-4" />
+                        Return for clarification
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                     <button
+                        onClick={() => setShowFhirModal(true)}
+                        className="text-xs text-slate-500 hover:text-slate-700 underline"
+                      >
+                        View FHIR
+                      </button>
+                  </div>
+                </div>
               </div>
 
               {/* ------ Raw Transcript (collapsible) ------ */}
