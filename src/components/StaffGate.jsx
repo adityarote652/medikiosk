@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { Stethoscope, Building2, ShieldAlert, Lock, ArrowRight } from 'lucide-react'
 
 // Lightweight prototype staff access gate
@@ -24,14 +24,19 @@ const ROLES = [
   },
 ]
 
-export default function StaffGate({ requiredRole }) {
+export default function StaffGate() {
   const navigate = useNavigate()
+  const location = useLocation()
+  
+  // Read state from App.jsx ProtectedStaffRoute if we were redirected
+  const deniedRole = location.state?.deniedRole
+  const requiredRole = location.state?.requiredRole
+  const returnTo = location.state?.from
+
   const [selected, setSelected] = useState(null)
-  const [denied, setDenied] = useState(false)
 
   function handleSelect(role) {
     setSelected(role.id)
-    setDenied(false)
   }
 
   function handleProceed() {
@@ -39,14 +44,14 @@ export default function StaffGate({ requiredRole }) {
     const role = ROLES.find(r => r.id === selected)
     if (!role) return
 
-    // Cross-role block: if trying to reach a protected route as the wrong role
-    if (requiredRole && selected !== requiredRole) {
-      setDenied(true)
-      return
-    }
-
     sessionStorage.setItem('staffRole', selected)
-    navigate(role.target)
+    
+    // Check if they are fulfilling a redirect
+    if (requiredRole === selected && returnTo) {
+      navigate(returnTo)
+    } else {
+      navigate(role.target)
+    }
   }
 
   const colorMap = {
@@ -130,13 +135,13 @@ export default function StaffGate({ requiredRole }) {
         </div>
 
         {/* Cross-role denied message */}
-        {denied && (
-          <div className="mb-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 flex items-start gap-2">
+        {deniedRole && (
+          <div className="mb-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 flex items-start gap-2 animate-fade-in">
             <ShieldAlert className="w-4 h-4 text-rose-600 mt-0.5 flex-shrink-0" />
-            <p className="text-xs text-rose-700 font-medium">
-              Access denied. Your session is scoped to the{' '}
-              <strong>{sessionStorage.getItem('staffRole') === 'doctor' ? 'Doctor Console' : 'Admin Dashboard'}</strong>.
-              Close this tab or clear the session to switch roles.
+            <p className="text-xs text-rose-700 font-medium leading-relaxed">
+              Access denied to the requested area. Your session is currently scoped to the{' '}
+              <strong>{deniedRole === 'doctor' ? 'Doctor Console' : 'Admin Dashboard'}</strong>.
+              <br />Select a new role and proceed to switch.
             </p>
           </div>
         )}

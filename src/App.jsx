@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { BrowserRouter, Routes, Route, NavLink, useLocation, useNavigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, NavLink, useLocation, useNavigate, Navigate } from 'react-router-dom'
 import { Activity, Menu, X, Stethoscope, User, Building2, ExternalLink, Lock, LogOut } from 'lucide-react'
 import LandingPage     from './pages/LandingPage'
 import PatientKiosk    from './pages/PatientKiosk'
@@ -17,12 +17,13 @@ function clearStaffRole() {
 }
 
 // ── Protected staff route ────────────────────────────────────────────────────
-// If no role is set → show StaffGate (role selector).
-// If role is set but doesn't match the required role → show StaffGate with denied state.
+// If no role is set or role doesn't match the required role → redirect to /staff with state.
 function ProtectedStaffRoute({ requiredRole, children }) {
   const role = getStaffRole()
+  const location = useLocation()
+  
   if (!role || role !== requiredRole) {
-    return <StaffGate requiredRole={requiredRole} />
+    return <Navigate to="/staff" state={{ requiredRole, deniedRole: role, from: location.pathname }} replace />
   }
   return children
 }
@@ -104,7 +105,7 @@ function EnterpriseHeader() {
             {/* Staff login shortcut if no role yet */}
             {!staffRole && (
               <NavLink
-                to="/doctor"
+                to="/staff"
                 className={({ isActive }) =>
                   `flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                     isActive ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-300 hover:bg-slate-700 hover:text-white'
@@ -218,6 +219,7 @@ export default function App() {
       <Routes>
         <Route path="/"        element={<LandingPage />} />
         <Route path="/patient" element={<PatientKiosk />} />
+        <Route path="/staff"   element={<StaffGate />} />
         <Route
           path="/doctor"
           element={
