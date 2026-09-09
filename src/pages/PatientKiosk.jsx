@@ -663,7 +663,7 @@ export default function PatientKiosk() {
                     : <div className="w-5 h-5 rounded-md border-2 border-slate-400" />}
                 </span>
                 <p className="text-xs text-slate-600 leading-relaxed">
-                  {CONSENT_TEXT}
+                  {t('CONSENT_TEXT')}
                 </p>
               </button>
               {formErrors.consent && (

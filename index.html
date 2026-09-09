@@ -12,6 +12,15 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   </head>
   <body class="antialiased overflow-x-hidden bg-slate-50 text-slate-900">
+    <div id="error-display" style="color:red; background:white; position:fixed; z-index:999999;"></div>
+    <script>
+      window.onerror = function(message, source, lineno, colno, error) {
+        document.getElementById('error-display').innerText += message + '\n' + (error && error.stack);
+      };
+      console.error = function(...args) {
+        document.getElementById('error-display').innerText += 'Console Error: ' + args.join(' ') + '\n';
+      };
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
