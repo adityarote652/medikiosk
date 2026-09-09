@@ -6,9 +6,9 @@ import {
 } from 'lucide-react'
 import { processClinicalIntake, compressImageToBase64, getGenerativeModel } from '../lib/gemini'
 import { addPatientIntake } from '../lib/firebase'
+import { TRANSLATIONS, GUIDED_FLOW } from '../lib/kioskTranslations'
 import StepIndicator from '../components/StepIndicator'
 import WaveVisualizer from '../components/WaveVisualizer'
-
 
 // ------------------------ Constants ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -102,7 +102,10 @@ function BodyZoneButton({ zone, isSelected, onClick }) {
 export default function PatientKiosk() {
   // ---------------- Global state
   const [step, setStep] = useState(1)
-  const [lang, setLang] = useState(LANGUAGES[0])
+  const [lang, setLang] = useState(() => {
+    const saved = typeof window !== 'undefined' ? sessionStorage.getItem('kioskLang') : null
+    return saved ? LANGUAGES.find(l => l.code === saved) || LANGUAGES[0] : LANGUAGES[0]
+  })
   const [clinicalMode, setClinicalMode] = useState(CLINICAL_MODES[0])
   const [clock, setClock] = useState(new Date())
 
@@ -112,15 +115,21 @@ export default function PatientKiosk() {
   const [formErrors, setFormErrors] = useState({})
   const [abhaWarning, setAbhaWarning] = useState('')
 
-  // ---------------- Step 2: Symptoms
-  const [selectedZones, setSelectedZones] = useState([])
+  // ---------------- Step 2: Guided Interview
+  const [guidedNode, setGuidedNode] = useState('root')
+  const [guidedAnswers, setGuidedAnswers] = useState({})
+  const [guidedStack, setGuidedStack] = useState([])
+  
   const [transcript, setTranscript] = useState('')
   const [interimText, setInterimText] = useState('')
   const [isListening, setIsListening] = useState(false)
   const [speechAvailable] = useState(() => SpeechRecognitionCtor !== null)
   const [speechError, setSpeechError] = useState('')
-  const [activeChips, setActiveChips] = useState([])
-  const [severity, setSeverity] = useState(null)
+  const [showLangToast, setShowLangToast] = useState('')
+
+  const t = useCallback((key) => {
+    return TRANSLATIONS[key]?.[lang.short] || TRANSLATIONS[key]?.EN || key
+  }, [lang.short])
 
   // ---------------- Step 2: Ayush Dashavidha profile
   const [ayushProfile, setAyushProfile] = useState({ prakriti: '', agni: '', koshtha: '', ahara: [], vihara: [] })
@@ -157,14 +166,6 @@ export default function PatientKiosk() {
     return () => clearInterval(id)
   }, [])
 
-  // Follow-up chips from selected zones
-  useEffect(() => {
-    const chips = [...new Set(
-      selectedZones.flatMap((id) => BODY_ZONES.find((z) => z.id === id)?.followups ?? [])
-    )].slice(0, 6)
-    setActiveChips(chips)
-  }, [selectedZones])
-
   // Cleanup recognition on unmount
   useEffect(() => {
     return () => {
@@ -176,7 +177,7 @@ export default function PatientKiosk() {
 
   const startListening = useCallback(() => {
     if (!SpeechRecognitionCtor) {
-      setSpeechError('Speech recognition is not supported in this browser. Please use Chrome or Edge, or type your symptoms below.')
+      setSpeechError(t('Speech API unavailable - use manual touch selector above or type symptoms below.'))
       return
     }
 
@@ -210,13 +211,7 @@ export default function PatientKiosk() {
 
     recognition.onerror = (e) => {
       setIsListening(false)
-      const msgs = {
-        'no-speech': 'No speech detected. Speak clearly and try again.',
-        'audio-capture': 'Microphone not accessible. Check browser permissions.',
-        'not-allowed': 'Microphone permission denied. Allow it in browser settings.',
-        'network': 'Network error during speech recognition. Check your connection.',
-      }
-      setSpeechError(msgs[e.error] ?? `Speech error: ${e.error}`)
+      setSpeechError(`Speech error: ${e.error}`)
     }
 
     recognition.onend = () => { setIsListening(false); setInterimText('') }
@@ -226,7 +221,7 @@ export default function PatientKiosk() {
     } catch (err) {
       setSpeechError('Could not start speech recognition: ' + err.message)
     }
-  }, [lang.code])
+  }, [lang.code, t])
 
   const stopListening = useCallback(() => {
     try { recognitionRef.current?.stop() } catch (_) {}
@@ -244,8 +239,6 @@ export default function PatientKiosk() {
     utterance.pitch = 1.0
     window.speechSynthesis.speak(utterance)
   }, [lang.code])
-
-  const CONSENT_TEXT = 'This is a prototype system. I consent to my voice transcript and uploaded documents being temporarily processed by AI for this consultation only. Data is not shared and is purged upon session completion.'
 
   // ------------------------ File Handling ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -273,17 +266,17 @@ export default function PatientKiosk() {
 
   const validateStep1 = () => {
     const errs = {}
-    if (!form.name.trim() || form.name.trim().length < 2) errs.name = 'Full name required (min 2 characters)'
+    if (!form.name.trim() || form.name.trim().length < 2) errs.name = t('Full name required (min 2 characters)')
     const ageNum = parseInt(form.age)
-    if (!form.age || isNaN(ageNum) || ageNum < 0 || ageNum > 120) errs.age = 'Valid age (0-120) required'
-    if (!form.gender) errs.gender = 'Please select gender'
-    if (form.abha && !ABHA_REGEX.test(form.abha)) errs.abha = 'Format: ABHA-XX-XXXX-XXXX-XXXX'
-    if (!consentGiven) errs.consent = 'DPDP consent is required to proceed'
+    if (!form.age || isNaN(ageNum) || ageNum < 0 || ageNum > 120) errs.age = t('Valid age (0-120) required')
+    if (!form.gender) errs.gender = t('Please select gender')
+    if (form.abha && !ABHA_REGEX.test(form.abha)) errs.abha = t('Format: ABHA-XX-XXXX-XXXX-XXXX')
+    if (!consentGiven) errs.consent = t('DPDP consent is required to proceed')
     setFormErrors(errs)
     return Object.keys(errs).length === 0
   }
 
-  const step2Valid = selectedZones.length > 0 || transcript.trim().length > 3
+  const step2Valid = guidedNode === null || transcript.trim().length > 3
 
   // ------------------------ Navigation ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -303,19 +296,12 @@ export default function PatientKiosk() {
 
     const activeToken = tokenNumber || Math.floor(Math.random() * 50) + 101
 
-    // Map selected zone IDs to readable clinical symptom descriptions
-    const zoneLabels = {
-      breathing: 'Breathing difficulty',
-      chest: 'Chest pain / tightness',
-      abdomen: 'Abdominal pain',
-      joints: 'Joint / muscle pain',
-      head: 'Headache / fever',
-      general: 'General weakness',
-    }
-    const symptoms =
-      selectedZones.map((id) => zoneLabels[id] || id).join(', ') ||
-      (transcript && transcript.trim()) ||
-      'Breathing difficulty'
+    // Process guidedAnswers to string
+    const symptomsList = Object.entries(guidedAnswers)
+      .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`)
+      .join(', ') || 'No specific symptoms entered'
+
+    const symptoms = guidedAnswers?.chief_complaint || transcript.trim() || 'Unspecified complaint'
 
     const ayushParikshaResolved = {
       prakriti: ayushProfile.prakriti || 'Not assessed',
@@ -336,23 +322,23 @@ export default function PatientKiosk() {
       triage_level: 'ROUTINE',
       red_flag_detected: false,
       red_flag_reason: '',
-      chief_complaint: symptoms || 'Breathing difficulty',
+      chief_complaint: symptoms,
       socrates: {
-        site: selectedZones.join(', ') || 'Chest / Respiratory',
-        onset: 'Recent',
-        character: symptoms || 'Breathing difficulty',
-        radiation: 'None reported',
-        associated_symptoms: [],
-        timing: 'Intermittent',
-        exacerbating_relieving: 'Standard rest',
-        severity: severity || 4,
+        site: guidedAnswers?.location || 'Unspecified',
+        onset: guidedAnswers?.onset || 'Recent',
+        character: guidedAnswers?.character || symptoms,
+        radiation: guidedAnswers?.radiation || 'None reported',
+        associated_symptoms: symptomsList,
+        timing: guidedAnswers?.duration || 'Intermittent',
+        exacerbating_relieving: guidedAnswers?.exertion_relation === 'Yes' ? 'Worse with exertion' : 'Standard rest',
+        severity: guidedAnswers?.severity || 'Not assessed',
       },
       ayush_pariksha: ayushParikshaResolved,
       extracted_records: { medications: [], abnormal_labs: [] },
       soap_note: {
-        subjective: `Patient (${form.name || 'Unknown'}, ${form.age || '-'}/${form.gender || '-'}) presents with ${symptoms || 'Breathing difficulty'}.${transcript ? ` Voice note: ${transcript}` : ''}${clinicalMode.id === 'AYUSH' ? ` Prakriti: ${ayushParikshaResolved.prakriti}, Agni: ${ayushParikshaResolved.agni}.` : ''}`,
+        subjective: `Patient (${form.name || 'Unknown'}, ${form.age || '-'}/${form.gender || '-'}) presents with ${symptoms}.\nDetails: ${symptomsList}${transcript ? `\nVoice note: ${transcript}` : ''}${clinicalMode.id === 'AYUSH' ? `\nPrakriti: ${ayushParikshaResolved.prakriti}, Agni: ${ayushParikshaResolved.agni}.` : ''}`,
         objective: 'Stable outpatient digital intake presentation. Ambulatory, non-emergent.',
-        assessment: `Routine assessment for ${symptoms || 'Breathing difficulty'}. Rule out acute exacerbation.`,
+        assessment: `Routine assessment for ${symptoms}. Rule out acute exacerbation.`,
         plan: '1. General OPD physician consultation\n2. Baseline vitals at triage desk\n3. Symptomatic therapy as prescribed',
       },
       _is_local_fallback: true,
@@ -365,8 +351,7 @@ export default function PatientKiosk() {
         `Patient: ${form.name}, Age: ${form.age}, Gender: ${form.gender}`,
         form.abha ? `ABHA: ${form.abha}` : '',
         `Clinical Mode: ${clinicalMode.label}`,
-        `Symptom areas: ${selectedZones.join(', ') || 'Not specified'}`,
-        severity ? `Severity: ${severity}/10` : '',
+        `Symptoms: ${symptomsList}`,
         transcript ? `Voice: ${transcript}` : '',
         clinicalMode.id === 'AYUSH' ? `Prakriti: ${ayushParikshaResolved.prakriti}, Agni: ${ayushParikshaResolved.agni}, Koshtha: ${ayushParikshaResolved.koshtha}` : '',
         clinicalMode.id === 'AYUSH' ? `Diet: ${ayushParikshaResolved.ahara_shakti}, Sleep: ${ayushParikshaResolved.vihara}` : '',
@@ -399,9 +384,12 @@ export default function PatientKiosk() {
       }
 
       // Hardcoded Red Flag Rule for Demo:
-      const hasChestPain = selectedZones.includes('chest')
-      const hasBreathlessness = selectedZones.includes('breathing') || (transcript && transcript.toLowerCase().includes('breath'))
-      const isSevereBreathing = selectedZones.includes('breathing') && severity >= 8
+      const chiefComplaint = guidedAnswers?.chief_complaint || ''
+      const breathlessness = guidedAnswers?.breathlessness === 'Yes'
+      const severityStr = guidedAnswers?.severity || ''
+      const hasChestPain = chiefComplaint === 'Chest Pain' || finalTranscript.toLowerCase().includes('chest pain')
+      const hasBreathlessness = breathlessness || finalTranscript.toLowerCase().includes('breath')
+      const isSevereBreathing = chiefComplaint === 'Breathing Difficulty' && severityStr.includes('Cannot speak in full sentences')
 
       let finalTriageLevel = finalResult.triage_level || 'ROUTINE'
       let finalRedFlag = finalResult.red_flag_detected || false
@@ -501,6 +489,12 @@ export default function PatientKiosk() {
         </div>
       )}
 
+      {showLangToast && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-emerald-700 text-white px-4 py-2 rounded-full shadow-lg font-medium text-sm animate-fade-in">
+          {showLangToast}
+        </div>
+      )}
+
       {/* ------ Header ------ */}
       <header className="bg-slate-900 text-white px-4 py-3 flex items-center justify-between shadow-lg sticky top-0 z-40">
         <div className="flex items-center gap-3">
@@ -508,9 +502,9 @@ export default function PatientKiosk() {
             <Activity className="w-5 h-5 text-white" />
           </div>
           <div>
-            <div className="font-bold text-sm">Central OPD Intake Portal</div>
+            <div className="font-bold text-sm">{t('Central OPD Intake Portal')}</div>
             <div className="text-xs text-slate-400">
-              {submitted || step === 5 ? 'Step 4: Review & Submit' : `Step ${step}: ${STEP_LABELS[step - 1] ?? 'Registration'}`}
+              {submitted || step === 5 ? t('Review & Submit') : `${t('Step')} ${step}: ${t(STEP_LABELS[step - 1]) ?? 'Registration'}`}
             </div>
           </div>
         </div>
@@ -521,7 +515,12 @@ export default function PatientKiosk() {
             {LANGUAGES.map((l) => (
               <button
                 key={l.code}
-                onClick={() => setLang(l)}
+                onClick={() => {
+                  setLang(l)
+                  if (typeof window !== 'undefined') sessionStorage.setItem('kioskLang', l.code)
+                  setShowLangToast(TRANSLATIONS['Language Changed']?.[l.short] || `Language changed: ${l.label}`)
+                  setTimeout(() => setShowLangToast(''), 3000)
+                }}
                 className={`px-3 py-1.5 text-xs font-semibold transition-colors ${lang.code === l.code ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
               >
                 {l.short}
@@ -553,26 +552,26 @@ export default function PatientKiosk() {
 
       {/* ---------------- Main ---------------- */}
       <main className="flex-1 max-w-2xl mx-auto w-full px-4 py-6">
-        <StepIndicator currentStep={submitted || step === 5 ? 4 : step} labels={STEP_LABELS} />
+        <StepIndicator currentStep={submitted || step === 5 ? 4 : step} labels={STEP_LABELS.map(l => t(l))} />
 
         {/* --------------------- STEP 1: Identity & DPDP Consent --------------------- */}
         {step === 1 && (
           <div className="animate-fade-in space-y-5">
             <div>
-              <h2 className="text-2xl font-bold text-slate-900 mb-1">Patient Identity Verification</h2>
-              <p className="text-slate-500 text-sm">Enter verified details to begin Central OPD registration</p>
+              <h2 className="text-2xl font-bold text-slate-900 mb-1">{t('Patient Identity Verification')}</h2>
+              <p className="text-slate-500 text-sm">{t('Enter verified details to begin Central OPD registration')}</p>
             </div>
 
             {/* Name */}
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-1.5">
-                Full Name <span className="text-rose-500">*</span>
+                {t('Full Name')} <span className="text-rose-500">*</span>
               </label>
               <input
                 type="text"
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
-                placeholder="Enter your full name"
+                placeholder={t('Enter your full name')}
                 className={`w-full px-4 py-3.5 text-base border-2 rounded-xl outline-none transition-colors ${formErrors.name ? 'border-rose-400 bg-rose-50' : 'border-slate-200 bg-white focus:border-emerald-500'}`}
               />
               {formErrors.name && <p className="text-xs text-rose-500 mt-1">{formErrors.name}</p>}
@@ -582,30 +581,30 @@ export default function PatientKiosk() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-1.5">
-                  Age <span className="text-rose-500">*</span>
+                  {t('Age')} <span className="text-rose-500">*</span>
                 </label>
                 <input
                   type="number" min={0} max={120}
                   value={form.age}
                   onChange={(e) => setForm({ ...form, age: e.target.value })}
-                  placeholder="Years"
+                  placeholder={t('Years')}
                   className={`w-full px-4 py-3.5 text-base border-2 rounded-xl outline-none transition-colors ${formErrors.age ? 'border-rose-400 bg-rose-50' : 'border-slate-200 bg-white focus:border-emerald-500'}`}
                 />
                 {formErrors.age && <p className="text-xs text-rose-500 mt-1">{formErrors.age}</p>}
               </div>
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-1.5">
-                  Gender <span className="text-rose-500">*</span>
+                  {t('Gender')} <span className="text-rose-500">*</span>
                 </label>
                 <select
                   value={form.gender}
                   onChange={(e) => setForm({ ...form, gender: e.target.value })}
                   className={`w-full px-4 py-3.5 text-base border-2 rounded-xl outline-none transition-colors appearance-none bg-white ${formErrors.gender ? 'border-rose-400 bg-rose-50' : 'border-slate-200 focus:border-emerald-500'}`}
                 >
-                  <option value="">Select</option>
-                  <option>Male</option>
-                  <option>Female</option>
-                  <option>Other</option>
+                  <option value="">{t('Select Gender')}</option>
+                  <option value="Male">{t('Male')}</option>
+                  <option value="Female">{t('Female')}</option>
+                  <option value="Other">{t('Other')}</option>
                 </select>
                 {formErrors.gender && <p className="text-xs text-rose-500 mt-1">{formErrors.gender}</p>}
               </div>
@@ -614,8 +613,8 @@ export default function PatientKiosk() {
             {/* ABHA ID */}
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-1.5">
-                ABHA Health ID
-                <span className="ml-2 text-xs font-normal text-slate-400">(Optional)</span>
+                {t('ABHA Health ID')}
+                <span className="ml-2 text-xs font-normal text-slate-400">({t('Optional - speeds up checkout')})</span>
               </label>
               <input
                 type="text"
@@ -623,7 +622,7 @@ export default function PatientKiosk() {
                 onChange={(e) => {
                   const v = e.target.value.toUpperCase()
                   setForm({ ...form, abha: v })
-                  setAbhaWarning(v && !ABHA_REGEX.test(v) ? 'Format: ABHA-XX-XXXX-XXXX-XXXX' : '')
+                  setAbhaWarning(v && !ABHA_REGEX.test(v) ? t('Format: ABHA-XX-XXXX-XXXX-XXXX') : '')
                 }}
                 placeholder="ABHA-14-1234-5678-9012"
                 className={`w-full px-4 py-3.5 text-base border-2 rounded-xl font-mono outline-none transition-colors ${abhaWarning || formErrors.abha ? 'border-amber-400 bg-amber-50' : 'border-slate-200 bg-white focus:border-emerald-500'}`}
@@ -641,15 +640,14 @@ export default function PatientKiosk() {
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-1.5">
                   <ShieldAlert className="w-4 h-4 text-emerald-600" />
-                  <span className="text-sm font-semibold text-slate-800">DPDP Act 2023 – Patient Data Consent</span>
+                  <span className="text-sm font-semibold text-slate-800">{t('Prototype Disclaimer')}</span>
                 </div>
                 <button
                   type="button"
-                  onClick={(e) => { e.stopPropagation(); speakText(CONSENT_TEXT) }}
-                  className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 rounded-lg font-semibold transition-colors"
-                  title="Listen to consent terms"
+                  onClick={() => speakText(t('CONSENT_TEXT'))}
+                  className="p-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-slate-500 transition-colors"
                 >
-                  <Volume2 className="w-3.5 h-3.5" /> Listen to Consent Terms
+                  <Volume2 className="w-4 h-4" />
                 </button>
               </div>
               <button
@@ -684,249 +682,83 @@ export default function PatientKiosk() {
             <div className="flex items-start justify-between">
               <div>
                 <h2 className="text-2xl font-bold text-slate-900 mb-1">
-                  {clinicalMode.id === 'AYUSH' ? 'Dashavidha Pariksha – Self Assessment' : 'Clinical History & Symptom Entry'}
+                  {t('Guided Clinical Interview')}
                 </h2>
-                <p className="text-slate-500 text-sm">
-                  {clinicalMode.id === 'AYUSH'
-                    ? 'Select your Prakriti and digestive constitution for the AIIA Ayurveda OPD'
-                    : 'Select presenting complaint area(s), then speak or type clinical history'}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => speakText(clinicalMode.id === 'AYUSH'
-                  ? 'Please select your body constitution, digestion type, bowel type, dietary habits and sleep pattern.'
-                  : 'Select the area of your body where you feel discomfort. Then speak or type your symptoms.'
-                )}
-                className="flex-shrink-0 p-2 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 transition-colors mt-1"
-                title="Read instructions aloud"
-              >
-                <Volume2 className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* ---- AYUSH MODE: Dashavidha Pariksha tactile cards ---- */}
-            {clinicalMode.id === 'AYUSH' && (
-              <div className="space-y-5">
-                {/* Prakriti */}
-                <div>
-                  <p className="text-xs font-bold text-amber-700 uppercase tracking-wider mb-2.5">
-                    Prakriti (Body Constitution)
-                  </p>
-                  <div className="grid grid-cols-3 gap-2.5">
-                    {AYUSH_PRAKRITI.map((p) => (
-                      <button
-                        key={p.id}
-                        type="button"
-                        onClick={() => setAyushProfile((prev) => ({ ...prev, prakriti: p.id }))}
-                        className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border-2 font-semibold text-sm transition-all active:scale-95 ${
-                          ayushProfile.prakriti === p.id
-                            ? p.color === 'sky' ? 'border-sky-500 bg-sky-50 text-sky-800'
-                              : p.color === 'amber' ? 'border-amber-500 bg-amber-50 text-amber-800'
-                              : 'border-emerald-500 bg-emerald-50 text-emerald-800'
-                            : 'border-slate-200 bg-white text-slate-700 hover:border-slate-400'
-                        }`}
-                      >
-                        <span className="text-base">{p.id === 'VATA' ? '🍃' : p.id === 'PITTA' ? '🔥' : '💧'}</span>
-                        <span>{p.label}</span>
-                        <span className="text-[10px] font-normal text-slate-500 text-center leading-tight">{p.desc}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Agni */}
-                <div>
-                  <p className="text-xs font-bold text-amber-700 uppercase tracking-wider mb-2.5">
-                    Agni / Digestion Type
-                  </p>
-                  <div className="grid grid-cols-3 gap-2.5">
-                    {AYUSH_AGNI.map((a) => (
-                      <button
-                        key={a.id}
-                        type="button"
-                        onClick={() => setAyushProfile((prev) => ({ ...prev, agni: a.id }))}
-                        className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border-2 font-semibold text-sm transition-all active:scale-95 ${
-                          ayushProfile.agni === a.id
-                            ? a.color === 'sky' ? 'border-sky-500 bg-sky-50 text-sky-800'
-                              : a.color === 'amber' ? 'border-amber-500 bg-amber-50 text-amber-800'
-                              : 'border-emerald-500 bg-emerald-50 text-emerald-800'
-                            : 'border-slate-200 bg-white text-slate-700 hover:border-slate-400'
-                        }`}
-                      >
-                        <span className="text-base">{a.id === 'MANDA' ? '🐢' : a.id === 'TIKSHNA' ? '⚡' : '✅'}</span>
-                        <span>{a.label}</span>
-                        <span className="text-[10px] font-normal text-slate-500 text-center leading-tight">{a.desc}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Koshtha */}
-                <div>
-                  <p className="text-xs font-bold text-amber-700 uppercase tracking-wider mb-2.5">
-                    Koshtha / Bowel Habit
-                  </p>
-                  <div className="grid grid-cols-3 gap-2.5">
-                    {AYUSH_KOSHTHA.map((k) => (
-                      <button
-                        key={k.id}
-                        type="button"
-                        onClick={() => setAyushProfile((prev) => ({ ...prev, koshtha: k.id }))}
-                        className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border-2 font-semibold text-sm transition-all active:scale-95 ${
-                          ayushProfile.koshtha === k.id
-                            ? k.color === 'rose' ? 'border-rose-500 bg-rose-50 text-rose-800'
-                              : k.color === 'amber' ? 'border-amber-500 bg-amber-50 text-amber-800'
-                              : 'border-emerald-500 bg-emerald-50 text-emerald-800'
-                            : 'border-slate-200 bg-white text-slate-700 hover:border-slate-400'
-                        }`}
-                      >
-                        <span className="text-base">{k.id === 'KRURA' ? '🪨' : k.id === 'MRIDU' ? '💦' : '⚖️'}</span>
-                        <span>{k.label}</span>
-                        <span className="text-[10px] font-normal text-slate-500 text-center leading-tight">{k.desc}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Ahara-Vihara */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-xs font-bold text-amber-700 uppercase tracking-wider mb-2">
-                      Ahara (Diet Preference)
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      {AYUSH_AHARA.map((item) => (
-                        <button
-                          key={item}
-                          type="button"
-                          onClick={() => setAyushProfile((prev) => ({
-                            ...prev,
-                            ahara: prev.ahara.includes(item)
-                              ? prev.ahara.filter((x) => x !== item)
-                              : [...prev.ahara, item]
-                          }))}
-                          className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all active:scale-95 ${
-                            ayushProfile.ahara.includes(item)
-                              ? 'bg-amber-500 border-amber-500 text-white'
-                              : 'bg-white border-slate-200 text-slate-600 hover:border-amber-400'
-                          }`}
-                        >
-                          {item}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div>
-                    <p className="text-xs font-bold text-amber-700 uppercase tracking-wider mb-2">
-                      Vihara (Sleep Pattern)
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      {AYUSH_VIHARA.map((item) => (
-                        <button
-                          key={item}
-                          type="button"
-                          onClick={() => setAyushProfile((prev) => ({
-                            ...prev,
-                            vihara: prev.vihara.includes(item)
-                              ? prev.vihara.filter((x) => x !== item)
-                              : [...prev.vihara, item]
-                          }))}
-                          className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all active:scale-95 ${
-                            ayushProfile.vihara.includes(item)
-                              ? 'bg-sky-600 border-sky-600 text-white'
-                              : 'bg-white border-slate-200 text-slate-600 hover:border-sky-400'
-                          }`}
-                        >
-                          {item}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800">
-                  <strong>AIIA Protocol:</strong> Dashavidha Pariksha is a self-reportable constitutional assessment. Final Dosha determination will be confirmed by the attending Ayurveda physician.
-                </div>
-              </div>
-            )}
-
-            {/* ---- Body zone grid (always shown in Allopathic, also available in Ayush for symptom localization) ---- */}
-            <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2.5">
-                {clinicalMode.id === 'AYUSH' ? 'Symptom Localization (Dosha aggravation site):' : 'Select Presenting Complaint Area (tap all that apply)'}
-              </p>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                {BODY_ZONES.map((zone) => (
-                  <BodyZoneButton
-                    key={zone.id}
-                    zone={zone}
-                    isSelected={selectedZones.includes(zone.id)}
-                    onClick={(id) =>
-                      setSelectedZones((prev) =>
-                        prev.includes(id) ? prev.filter((z) => z !== id) : [...prev, id]
-                      )
-                    }
-                  />
-                ))}
+                <p className="text-slate-500 text-sm">{t('Pre-consultation information gathering, not diagnosis.')}</p>
               </div>
             </div>
 
-            {/* Follow-up chips */}
-            {activeChips.length > 0 && (
-              <div>
-                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Quick prompts:</p>
-                <div className="flex flex-wrap gap-2">
-                  {activeChips.map((chip) => (
+            {/* Guided Flow UI */}
+            {guidedNode !== null && GUIDED_FLOW[guidedNode] ? (
+              <div className="bg-slate-50 rounded-2xl p-5 border border-slate-200">
+                <div className="flex justify-between items-center mb-4">
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                    {t('Question')} {guidedStack.length + 1}
+                  </span>
+                  {guidedStack.length > 0 && (
+                    <button onClick={() => {
+                      const prevNode = guidedStack[guidedStack.length - 1];
+                      setGuidedStack(prev => prev.slice(0, -1));
+                      setGuidedNode(prevNode);
+                    }} className="text-xs font-semibold text-blue-600 px-3 py-1 bg-blue-50 hover:bg-blue-100 rounded-lg">
+                      ← {t('Back')}
+                    </button>
+                  )}
+                </div>
+                
+                <h3 className="text-xl font-bold text-slate-800 mb-6 leading-tight">
+                  {GUIDED_FLOW[guidedNode].q[lang.short] || GUIDED_FLOW[guidedNode].q.EN}
+                </h3>
+                
+                <div className="grid gap-3">
+                  {GUIDED_FLOW[guidedNode].options.map((opt, i) => (
                     <button
-                      key={chip}
-                      onClick={() => setTranscript((prev) => prev ? `${prev} [${chip}]` : `[${chip}]`)}
-                      className="px-3 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-full text-xs font-medium hover:bg-blue-100 transition-colors active:scale-95"
+                      key={i}
+                      onClick={() => {
+                        setGuidedAnswers(prev => ({ ...prev, [GUIDED_FLOW[guidedNode].key]: opt.val }))
+                        if (opt.next) {
+                          setGuidedStack(prev => [...prev, guidedNode])
+                          setGuidedNode(opt.next)
+                        } else {
+                          setGuidedNode(null) // End of flow
+                        }
+                      }}
+                      className="w-full text-left p-4 rounded-xl border-2 border-slate-200 bg-white hover:border-emerald-500 hover:bg-emerald-50 text-slate-700 font-semibold transition-all active:scale-95 flex items-center justify-between"
                     >
-                      + {chip}
+                      <span>{opt.t[lang.short] || opt.t.EN}</span>
+                      <ChevronRight className="w-5 h-5 text-slate-400" />
                     </button>
                   ))}
+                  <button
+                    onClick={() => {
+                      setGuidedAnswers(prev => ({ ...prev, [GUIDED_FLOW[guidedNode].key]: 'Not known / Skipped' }))
+                      const opt = GUIDED_FLOW[guidedNode].options[0]
+                      if (opt && opt.next) {
+                        setGuidedStack(prev => [...prev, guidedNode])
+                        setGuidedNode(opt.next)
+                      } else {
+                        setGuidedNode(null)
+                      }
+                    }}
+                    className="w-full text-center p-3 rounded-xl border-2 border-transparent text-slate-400 font-medium hover:bg-slate-100 transition-all text-sm mt-2"
+                  >
+                    {t("Skip / I don't know")}
+                  </button>
                 </div>
+              </div>
+            ) : (
+              <div className="bg-emerald-50 border-2 border-emerald-200 rounded-2xl p-6 text-center">
+                <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto mb-3" />
+                <h3 className="text-lg font-bold text-emerald-800">{t('Pre-consultation information gathering, not diagnosis.')} Complete</h3>
               </div>
             )}
 
-            {/* Severity */}
-            <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-                Pain / Discomfort Severity:
-              </p>
-              <div className="flex gap-1.5 flex-wrap">
-                {[1,2,3,4,5,6,7,8,9,10].map((n) => (
-                  <button
-                    key={n}
-                    onClick={() => setSeverity(n)}
-                    className={`w-11 h-11 rounded-lg font-bold text-sm border-2 transition-all active:scale-95 ${
-                      severity === n
-                        ? n <= 3 ? 'bg-emerald-500 border-emerald-500 text-white'
-                          : n <= 6 ? 'bg-amber-500 border-amber-500 text-white'
-                          : 'bg-rose-500 border-rose-500 text-white'
-                        : 'bg-white border-slate-200 text-slate-600 hover:border-slate-400'
-                    }`}
-                  >
-                    {n}
-                  </button>
-                ))}
-              </div>
-              {severity && (
-                <p className="text-xs text-slate-500 mt-1">
-                  Severity: <strong className={severity <= 3 ? 'text-emerald-600' : severity <= 6 ? 'text-amber-600' : 'text-rose-600'}>
-                    {severity}/10 - {severity <= 3 ? 'Mild' : severity <= 6 ? 'Moderate' : 'Severe'}
-                  </strong>
-                </p>
-              )}
-            </div>
-
-            {/* Voice recorder */}
+            {/* Voice recorder (Optional Fallback) */}
             <div className="bg-white border-2 border-slate-200 rounded-xl p-4">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
                   <Volume2 className="w-4 h-4 text-slate-500" />
-                  <span className="text-sm font-semibold text-slate-700">Voice Input</span>
+                  <span className="text-sm font-semibold text-slate-700">{t('Voice Input')}</span>
                   <span className="text-xs text-slate-400">({lang.label})</span>
                 </div>
                 {speechAvailable ? (
@@ -936,11 +768,11 @@ export default function PatientKiosk() {
                       isListening ? 'bg-rose-600 hover:bg-rose-700 text-white' : 'bg-emerald-600 hover:bg-emerald-700 text-white'
                     }`}
                   >
-                    {isListening ? <><MicOff className="w-4 h-4" /> Stop</> : <><Mic className="w-4 h-4" /> Speak</>}
+                    {isListening ? <><MicOff className="w-4 h-4" /> {t('Stop')}</> : <><Mic className="w-4 h-4" /> {t('Speak')}</>}
                   </button>
                 ) : (
                   <span className="text-xs text-amber-600 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg font-medium">
-                    Type below
+                    {t('Type below')}
                   </span>
                 )}
               </div>
@@ -949,7 +781,7 @@ export default function PatientKiosk() {
                 <div className="mb-3 p-3 bg-rose-50 border border-rose-200 rounded-lg flex items-start gap-2">
                   <AlertTriangle className="w-4 h-4 text-rose-600 flex-shrink-0 mt-0.5" />
                   <p className="text-xs text-amber-700">
-                    Speech API unavailable - use manual touch selector above or type symptoms below.
+                    {t('Speech API unavailable - use manual touch selector above or type symptoms below.')}
                   </p>
                 </div>
               )}
@@ -976,14 +808,14 @@ export default function PatientKiosk() {
               <textarea
                 value={transcript}
                 onChange={(e) => setTranscript(e.target.value)}
-                placeholder={`Speak or type symptoms in ${lang.label}...\ne.g. "Severe chest pain since morning radiating to left shoulder" or "Fever and cough for 3 days"`}
-                rows={5}
+                placeholder={`${t('Speak or type symptoms in')} ${lang.label}...\n`}
+                rows={4}
                 className="w-full px-3 py-3 text-sm border border-slate-200 rounded-lg bg-slate-50 text-slate-800 resize-none outline-none focus:ring-2 focus:ring-emerald-500 transition-all"
               />
               {transcript && (
                 <div className="flex justify-between items-center mt-1">
                   <span className="text-xs text-slate-400">{transcript.length} characters</span>
-                  <button onClick={() => setTranscript('')} className="text-xs text-rose-500 hover:text-rose-700">Clear</button>
+                  <button onClick={() => setTranscript('')} className="text-xs text-rose-500 hover:text-rose-700">{t('Clear')}</button>
                 </div>
               )}
               {!isListening && !transcript && (
@@ -991,7 +823,7 @@ export default function PatientKiosk() {
                   onClick={() => setTranscript('Severe chest pain and heavy breathlessness since morning. Pain is 9 out of 10.')}
                   className="mt-2 text-[11px] text-blue-600 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded border border-blue-200 font-semibold w-full transition-colors"
                 >
-                  ✨ Populate Demo Emergency Transcript
+                  {t('Populate Demo Emergency Transcript')}
                 </button>
               )}
             </div>
@@ -999,7 +831,7 @@ export default function PatientKiosk() {
             {!step2Valid && (
               <p className="text-xs text-amber-600 flex items-center gap-1">
                 <AlertTriangle className="w-3.5 h-3.5" />
-                Select at least one symptom area or enter a description to continue.
+                {t('Please answer the question or skip.')}
               </p>
             )}
           </div>
@@ -1009,8 +841,8 @@ export default function PatientKiosk() {
         {step === 3 && (
           <div className="animate-fade-in space-y-5">
             <div>
-              <h2 className="text-2xl font-bold text-slate-900 mb-1">Prior Records Upload</h2>
-              <p className="text-slate-500 text-sm">Attach prior prescriptions or investigation reports for AI-assisted extraction (optional)</p>
+              <h2 className="text-2xl font-bold text-slate-900 mb-1">{t('Prior Records Upload')}</h2>
+              <p className="text-slate-500 text-sm">{t('Attach prior prescriptions or investigation reports for AI-assisted extraction (optional)')}</p>
             </div>
 
             {!imagePreview ? (
@@ -1036,12 +868,12 @@ export default function PatientKiosk() {
                     <UploadCloud className="w-8 h-8 text-slate-400" />
                   </div>
                   <div>
-                    <p className="text-base font-semibold text-slate-700 mb-1">Drop here or tap to capture</p>
-                    <p className="text-sm text-slate-400">JPG, PNG - auto-compressed to 1200px</p>
+                    <p className="text-base font-semibold text-slate-700 mb-1">{t('Drop here or tap to capture')}</p>
+                    <p className="text-sm text-slate-400">{t('JPG, PNG - auto-compressed to 1200px')}</p>
                   </div>
                   <div className="flex gap-2 mt-1 flex-wrap justify-center">
-                    {['Camera Capture', 'Lab Report', 'Prescription'].map((t) => (
-                      <span key={t} className="text-xs text-slate-500 bg-slate-100 px-3 py-1.5 rounded-full">{t}</span>
+                    {[t('Camera Capture'), t('Lab Report'), t('Prescription')].map((txt) => (
+                      <span key={txt} className="text-xs text-slate-500 bg-slate-100 px-3 py-1.5 rounded-full">{txt}</span>
                     ))}
                   </div>
                 </div>
@@ -1176,8 +1008,8 @@ export default function PatientKiosk() {
         {step === 4 && !submitted && (
           <div className="animate-fade-in space-y-5">
             <div>
-              <h2 className="text-2xl font-bold text-slate-900 mb-1">Review & Clinical Submission</h2>
-              <p className="text-slate-500 text-sm">Verify patient details before clinical intake submission</p>
+              <h2 className="text-2xl font-bold text-slate-900 mb-1">{t('Review & Clinical Submission')}</h2>
+              <p className="text-slate-500 text-sm">{t('Verify patient details before clinical intake submission')}</p>
             </div>
 
             {/* Summary */}
@@ -1185,17 +1017,20 @@ export default function PatientKiosk() {
               
               {/* Display immediate triage red flag warning on review screen if conditions met */}
               {(() => {
-                const hasChestPain = selectedZones.includes('chest')
-                const hasBreathlessness = selectedZones.includes('breathing') || (transcript && transcript.toLowerCase().includes('breath'))
-                const isSevereBreathing = selectedZones.includes('breathing') && severity >= 8
+                const chiefComplaint = guidedAnswers?.chief_complaint || ''
+                const breathlessness = guidedAnswers?.breathlessness === 'Yes'
+                const severityStr = guidedAnswers?.severity || ''
+                const hasChestPain = chiefComplaint === 'Chest Pain' || transcript.toLowerCase().includes('chest pain')
+                const hasBreathlessness = breathlessness || transcript.toLowerCase().includes('breath')
+                const isSevereBreathing = chiefComplaint === 'Breathing Difficulty' && severityStr.includes('Cannot speak in full sentences')
                 
                 if ((hasChestPain && hasBreathlessness) || isSevereBreathing) {
                   return (
                     <div className="mb-4 p-4 bg-rose-600 text-white rounded-xl shadow-sm flex items-start gap-3 animate-pulse">
                       <AlertTriangle className="w-6 h-6 flex-shrink-0" />
                       <div>
-                        <p className="font-bold text-sm">🚨 IMMEDIATE TRIAGE ALERT</p>
-                        <p className="text-xs mt-0.5 opacity-90">Severe symptoms (chest pain with breathlessness or severe respiratory distress) detected. This case will be escalated as an EMERGENCY.</p>
+                        <p className="font-bold text-sm">🚨 {t('IMMEDIATE TRIAGE ALERT')}</p>
+                        <p className="text-xs mt-0.5 opacity-90">{t('Severe symptoms (chest pain with breathlessness or severe respiratory distress) detected. This case will be escalated as an EMERGENCY.')}</p>
                       </div>
                     </div>
                   )
@@ -1205,12 +1040,11 @@ export default function PatientKiosk() {
 
               <div className="grid grid-cols-2 gap-4 mb-4">
                 {[
-                  { label: 'Patient Name', value: form.name || '-' },
-                  { label: 'Age / Gender', value: `${form.age ? form.age + ' yrs' : '--------'} / ${form.gender || '--------'}` },
-                  { label: 'ABHA ID', value: form.abha || 'Not provided' },
-                  { label: 'Clinical Mode', value: clinicalMode.label },
-                  { label: 'Symptom Areas', value: selectedZones.join(', ') || 'Not specified' },
-                  { label: 'Severity', value: severity ? `${severity}/10` : 'Not specified' },
+                  { label: t('Patient Name'), value: form.name || '-' },
+                  { label: t('Age / Gender'), value: `${form.age ? form.age + ' yrs' : '--------'} / ${form.gender ? t(form.gender) : '--------'}` },
+                  { label: t('ABHA ID'), value: form.abha || t('Not provided') },
+                  { label: t('Clinical Mode'), value: clinicalMode.label },
+                  { label: t('Symptoms'), value: Object.values(guidedAnswers).join(', ') || t('Not specified') },
                 ].map(({ label, value }) => (
                   <div key={label}>
                     <p className="text-xs text-slate-400 font-medium mb-0.5">{label}</p>
@@ -1220,14 +1054,14 @@ export default function PatientKiosk() {
               </div>
               {transcript && (
                 <div className="border-t border-slate-100 pt-3 mb-3">
-                  <p className="text-xs text-slate-400 font-medium mb-1.5">Voice / Text Transcript</p>
+                  <p className="text-xs text-slate-400 font-medium mb-1.5">{t('Voice / Text Transcript')}</p>
                   <p className="text-xs text-slate-600 bg-slate-50 rounded-lg p-3 max-h-24 overflow-y-auto leading-relaxed">{transcript}</p>
                 </div>
               )}
               {scanDone && (
                 <div className="border-t border-slate-100 pt-3">
                   <p className="text-xs text-slate-400 font-medium mb-1.5 flex justify-between">
-                    <span>Extracted Document Entities</span>
+                    <span>{t('Extracted Document Entities')}</span>
                     <span className="text-emerald-600">OCR: 98%</span>
                   </p>
                   <div className="bg-slate-50 rounded-lg p-3 space-y-2">
@@ -1242,7 +1076,7 @@ export default function PatientKiosk() {
             <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 text-rose-600 flex-shrink-0 mt-0.5" />
               <p className="text-xs text-amber-800 leading-relaxed">
-                <strong>AI Notice:</strong> Clinical data is AI-assisted. Final decisions rest with the attending physician.
+                <strong>{t('AI Notice')}:</strong> {t('Clinical data is AI-assisted. Final decisions rest with the attending physician.')}
               </p>
             </div>
 
@@ -1250,10 +1084,10 @@ export default function PatientKiosk() {
               <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl flex items-start gap-2">
                 <AlertTriangle className="w-5 h-5 text-rose-600 flex-shrink-0 mt-0.5" />
                 <div>
-                  <p className="text-sm font-semibold text-rose-800">Submission Error</p>
+                  <p className="text-sm font-semibold text-rose-800">{t('Submission Error')}</p>
                   <p className="text-xs text-rose-700">{submitError}</p>
                   <button onClick={handleSubmit} className="mt-2 text-xs font-semibold text-rose-600 hover:underline flex items-center gap-1">
-                    <RefreshCw className="w-3 h-3" /> Retry
+                    <RefreshCw className="w-3 h-3" /> {t('Retry')}
                   </button>
                 </div>
               </div>
@@ -1265,9 +1099,9 @@ export default function PatientKiosk() {
               className="w-full flex items-center justify-center gap-3 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white font-bold text-lg rounded-2xl transition-all duration-200 active:scale-[0.98] py-4 shadow-lg min-h-[60px]"
             >
               {isSubmitting ? (
-                <><RefreshCw className="w-5 h-5 animate-spin" /> AI Processing... Please wait</>
+                <><RefreshCw className="w-5 h-5 animate-spin" /> {t('AI Processing... Please wait')}</>
               ) : (
-                <><Activity className="w-5 h-5" /> Submit for physician review</>
+                <><Activity className="w-5 h-5" /> {t('Submit for physician review')}</>
               )}
             </button>
           </div>
@@ -1281,16 +1115,16 @@ export default function PatientKiosk() {
               <div className="p-4 bg-rose-600 text-white rounded-xl border-2 border-rose-700 animate-pulse flex items-start gap-3">
                 <AlertTriangle className="w-7 h-7 flex-shrink-0" />
                 <div className="text-left flex-1">
-                  <p className="font-black text-base tracking-wide">🚨 RED FLAG: Immediate Triage Required</p>
-                  <p className="text-sm font-semibold opacity-95 mt-0.5">Priority Casualty Escalation – DO NOT WAIT IN OPD SEATING</p>
+                  <p className="font-black text-base tracking-wide">🚨 {t('RED FLAG: Immediate Triage Required')}</p>
+                  <p className="text-sm font-semibold opacity-95 mt-0.5">{t('Priority Casualty Escalation – DO NOT WAIT IN OPD SEATING')}</p>
                   {clinicalResult?.red_flag_reason && (
                     <p className="text-xs opacity-80 mt-1">{clinicalResult.red_flag_reason}</p>
                   )}
-                  <p className="text-xs opacity-75 mt-1 font-medium">Proceed directly to the Emergency Triage Bay with this token.</p>
+                  <p className="text-xs opacity-75 mt-1 font-medium">{t('Proceed directly to the Emergency Triage Bay with this token.')}</p>
                 </div>
                 <button
                   type="button"
-                  onClick={() => speakText('Red flag emergency detected. Please proceed immediately to the Emergency Triage Bay. Do not wait in the OPD seating area.')}
+                  onClick={() => speakText(t('Red flag emergency detected. Please proceed immediately to the Emergency Triage Bay. Do not wait in the OPD seating area.'))}
                   className="flex-shrink-0 p-1.5 rounded-lg bg-white/20 hover:bg-white/30 transition-colors"
                 >
                   <Volume2 className="w-4 h-4" />
@@ -1305,41 +1139,42 @@ export default function PatientKiosk() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => speakText(`Registration successful. Your OPD token is ${tokenNumber}. Please wait in the OPD seating area.`)}
+                  onClick={() => speakText(`${t('Registration successful. Your OPD token is')} ${tokenNumber}. ${t('Please wait in the OPD seating area.')}`)}
                   className="p-2.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 transition-colors"
-                  title="Read token number aloud"
+                  title={t('Read token number aloud')}
                 >
                   <Volume2 className="w-5 h-5" />
                 </button>
               </div>
-              <h3 className="text-xl font-bold text-slate-900 mb-1">Registration Successful!</h3>
-              <p className="text-sm text-slate-500 mb-6">Your OPD token has been issued</p>
+
+              <h3 className="text-xl font-bold text-slate-900 mb-1">{t('Registration Complete')}</h3>
+              <p className="text-sm text-slate-500 mb-6">{t('Your case has been forwarded to the physician.')}</p>
 
               <div className="bg-slate-50 border border-slate-200 rounded-2xl p-6 mb-5">
-                <p className="text-slate-500 text-xs font-semibold tracking-widest mb-1 uppercase">OPD Token</p>
+                <p className="text-slate-500 text-xs font-semibold tracking-widest mb-1 uppercase">{t('OPD Token Number')}</p>
                 <p className="text-5xl font-black text-slate-900 font-mono tracking-wider">
                   {String(tokenNumber).startsWith('TK-') ? tokenNumber : (String(tokenNumber).startsWith('#') ? tokenNumber : `TK-${tokenNumber}`)}
                 </p>
-                <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold mt-3 ${triageClass}`}>
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold mt-3 bg-slate-200 text-slate-700">
                   {clinicalResult?.triage_level || 'ROUTINE'}
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4 text-left mb-4">
                 <div className="bg-slate-50 rounded-xl p-3">
-                  <p className="text-xs text-slate-400 mb-0.5">Patient</p>
-                  <p className="text-sm font-bold text-slate-900 truncate">{form.name || 'Patient'}</p>
+                  <p className="text-xs text-slate-400 mb-0.5">{t('Patient Name')}</p>
+                  <p className="text-sm font-bold text-slate-900 truncate">{form.name || t('Patient')}</p>
                 </div>
                 <div className="bg-slate-50 rounded-xl p-3">
-                  <p className="text-xs text-slate-400 mb-0.5">Est. Wait</p>
+                  <p className="text-xs text-slate-400 mb-0.5">{t('Est. Wait')}</p>
                   <p className="text-sm font-bold text-emerald-700">
-                    {clinicalResult?.triage_level === 'EMERGENCY' ? 'IMMEDIATE'
+                    {clinicalResult?.triage_level === 'EMERGENCY' ? t('IMMEDIATE')
                       : clinicalResult?.triage_level === 'URGENT' ? '~15 mins'
                       : '~30-45 mins'}
                   </p>
                 </div>
                 <div className="bg-slate-50 rounded-xl p-3">
-                  <p className="text-xs text-slate-400 mb-0.5">Mode</p>
+                  <p className="text-xs text-slate-400 mb-0.5">{t('Department')}</p>
                   <p className="text-sm font-semibold text-slate-700">{clinicalMode.label}</p>
                 </div>
                 <div className="bg-slate-50 rounded-xl p-3">
@@ -1349,7 +1184,7 @@ export default function PatientKiosk() {
               </div>
 
               <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-left mb-4">
-                <p className="text-xs font-semibold text-blue-700 mb-0.5">AI Summary:</p>
+                <p className="text-xs font-semibold text-blue-700 mb-0.5">{t('AI Summary')}:</p>
                 <p className="text-xs text-blue-800 leading-relaxed">{clinicalResult?.chief_complaint || 'Routine outpatient clinical intake recorded.'}</p>
               </div>
 
@@ -1357,14 +1192,14 @@ export default function PatientKiosk() {
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-left flex items-start gap-2">
                 <ShieldAlert className="w-4 h-4 text-slate-400 flex-shrink-0 mt-0.5" />
                 <p className="text-[10px] text-slate-500 leading-relaxed">
-                  <strong className="text-slate-600">DPDP Act 2023 – Session Data Purged.</strong> Your voice transcript and uploaded documents have been cleared from this kiosk session. Only the de-identified clinical summary has been forwarded to the physician console.
+                  <strong className="text-slate-600">DPDP Act 2023 – Session Data Purged.</strong> {t('Your voice transcript and uploaded documents have been cleared from this kiosk session. Only the de-identified clinical summary has been forwarded to the physician console.')}
                 </p>
               </div>
             </div>
 
-            <p className="text-sm text-slate-500">Please wait in the OPD seating area.</p>
+            <p className="text-sm text-slate-500">{t('Please wait in the OPD seating area.')}</p>
             <button onClick={resetForm} className="text-sm text-slate-400 hover:text-slate-700 underline">
-              Register new patient
+              {t('Register New Patient')}
             </button>
           </div>
         )}
@@ -1379,14 +1214,14 @@ export default function PatientKiosk() {
                 disabled={step === 1}
                 className="flex items-center gap-2 px-5 py-3 text-slate-600 hover:text-slate-900 disabled:opacity-30 font-semibold text-sm transition-colors"
               >
-                <ChevronRight className="w-5 h-5 rotate-180" /> Back
+                <ChevronRight className="w-5 h-5 rotate-180" /> {t('Back')}
               </button>
               <button
                 type="button"
                 className="flex items-center gap-1.5 text-xs px-3 py-2 text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-lg font-bold border border-rose-200 transition-colors"
-                onClick={() => alert('A staff member has been notified and will assist you shortly.')}
+                onClick={() => alert(t('A staff member has been notified and will assist you shortly.'))}
               >
-                <User className="w-4 h-4" /> Need staff help?
+                <User className="w-4 h-4" /> {t('Need staff help?')}
               </button>
             </div>
             {step < 4 && (
@@ -1395,7 +1230,7 @@ export default function PatientKiosk() {
                 disabled={step === 2 && !step2Valid}
                 className="flex items-center gap-2 px-7 py-3 bg-slate-800 hover:bg-slate-900 disabled:bg-slate-300 text-white font-semibold text-sm rounded-xl transition-colors active:scale-95 min-h-[48px]"
               >
-                {step === 3 ? 'Review & Submit' : 'Continue'}
+                {step === 3 ? t('Review & Submit') : t('Continue')}
                 <ChevronRight className="w-5 h-5" />
               </button>
             )}
