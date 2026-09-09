@@ -151,7 +151,7 @@ export default function PatientKiosk() {
   const [submitted, setSubmitted] = useState(false)
   const [clinicalResult, setClinicalResult] = useState(null)
   const [submitError, setSubmitError] = useState('')
-  const [tokenNumber, setTokenNumber] = useState('TK-101')
+  const [tokenNumber, setTokenNumber] = useState(() => `TK-${101 + (Date.now() % 50)}`)
   const [intakeStart] = useState(() => Date.now())
 
   // ---------------- FHIR Modal (DoctorConsole mirrors this on submit; kiosk has none)
@@ -381,12 +381,13 @@ export default function PatientKiosk() {
         clinicalMode.id === 'AYUSH' ? `Diet: ${ayushParikshaResolved.ahara_shakti}, Sleep: ${ayushParikshaResolved.vihara}` : '',
       ].filter(Boolean).join('\n')
 
-      // 1. Wrap Gemini AI summary call with a strict 3-second timeout (Promise.race)
+      // 1. Wrap Gemini AI summary call with a strict 8-second timeout (Promise.race)
+      // NOTE: 8s gives the synthetic 1.2s offline fallback plenty of room; 3s was causing races in no-key demo mode.
       try {
         // Ensure model name is strictly "gemini-1.5-flash" without "models/" prefix
         const modelInstance = getGenerativeModel({ model: 'gemini-1.5-flash' })
         const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('AI intake timed out after 3s')), 3000)
+          setTimeout(() => reject(new Error('AI intake timed out after 8s')), 8000)
         )
         const aiResult = await Promise.race([
           processClinicalIntake({
@@ -444,7 +445,8 @@ export default function PatientKiosk() {
     } catch (err) {
       console.error("Gemini Intake Error:", err)
     } finally {
-      // 3. GUARANTEED NAVIGATION: Set isProcessing(false) and trigger the OPD Token Success screen in a finally block
+      // 3. GUARANTEED NAVIGATION: always unlock the button and advance to confirmation screen
+      setTokenNumber(activeToken)   // ensure confirmation card shows the correct token
       setIsProcessing(false)
       setSubmitting(false)
       setAiProcessing(false)
@@ -491,7 +493,9 @@ export default function PatientKiosk() {
           </div>
           <div>
             <div className="font-bold text-sm">Central OPD Intake Portal</div>
-            <div className="text-xs text-slate-400">Patient Identity Verification</div>
+            <div className="text-xs text-slate-400">
+              {submitted || step === 5 ? 'Step 4: Review & Submit' : `Step ${step}: ${STEP_LABELS[step - 1] ?? 'Registration'}`}
+            </div>
           </div>
         </div>
 

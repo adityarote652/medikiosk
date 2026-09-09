@@ -35,8 +35,7 @@ function parseDate(ts) {
 }
 
 function fmtTime(iso) {
-  const d = parseDate(iso)
-  if (!d) return '-'
+  const d = parseDate(iso) || new Date()   // fall back to now for mock records without a stored timestamp
   return d.toLocaleTimeString('en-IN', { hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
@@ -49,7 +48,7 @@ function formatToken(tok) {
 
 // Simulated cardiac emergency patient for the demo button
 const DEMO_EMERGENCY = {
-  patient_name:     'Emergency Test - Rajesh Kumar',
+  patient_name:     'Rajesh Kumar',
   age:              58,
   gender:           'Male',
   abha_id:          'ABHA-14-9876-5432-1098',
@@ -214,7 +213,7 @@ export default function AdminDashboard() {
     try {
       const rec = {
         ...DEMO_EMERGENCY,
-        token_number: Math.floor(Math.random() * 50) + 150,
+        token_number: `TK-${Math.floor(Math.random() * 50) + 200}`,
       }
       const saved = await addPatientIntake(rec)
       addLog(`INFLUX: Casualty walk-in registered - #TK-${saved.token_number}`, 'emergency')

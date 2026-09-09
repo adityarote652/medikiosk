@@ -11,12 +11,12 @@ const NAV_LINKS = [
 ]
 
 const FEATURES = [
-  { icon: Activity,    label: 'AI-Powered Triage',      desc: 'Gemini 1.5 Flash auto-analyzes symptoms and flags emergency cases in real time', color: 'amber' },
-  { icon: Activity,    label: 'Multilingual Voice',      desc: 'Native Web Speech API supporting Hindi, Marathi, and Indian English with live transcript streaming', color: 'blue' },
-  { icon: Stethoscope, label: 'Dual Clinical Mode',      desc: 'Allopathic SOCRATES pain framework alongside Ayurvedic Dashavidha Pariksha', color: 'emerald' },
-  { icon: ShieldAlert, label: 'DPDP Act 2023 Compliant', desc: 'Explicit consent gate, session-scoped data, immutable audit log, and purge-on-completion', color: 'violet' },
-  { icon: Heart,       label: 'ABDM / ABHA Linkage',     desc: 'ABHA identifier validation and structured FHIR-aligned health records', color: 'rose' },
-  { icon: Activity,    label: 'Realtime Data Sync',      desc: 'Firebase Firestore with hybrid BroadcastChannel mesh sync for resilient local fallback', color: 'cyan' },
+  { icon: Activity,    label: 'AI-Powered Triage',          desc: 'Gemini 1.5 Flash auto-analyzes symptoms and flags emergency cases in real time', color: 'amber' },
+  { icon: Activity,    label: 'Multilingual Voice',          desc: 'Native Web Speech API supporting Hindi, Marathi, and Indian English with live transcript streaming', color: 'blue' },
+  { icon: Stethoscope, label: 'Dual Clinical Mode',          desc: 'Allopathic SOCRATES pain framework alongside Ayurvedic Dashavidha Pariksha', color: 'emerald' },
+  { icon: ShieldAlert, label: 'DPDP Act 2023 Ready',         desc: 'Explicit consent gate, session-scoped data, immutable audit log, and purge-on-completion — designed for DPDP compliance', color: 'violet' },
+  { icon: Heart,       label: 'ABDM-Ready Architecture',     desc: 'ABHA identifier field, FHIR-structured health record model, and ABDM integration architecture in place for live deployment', color: 'rose' },
+  { icon: Activity,    label: 'Realtime Data Sync',          desc: 'Firebase Firestore with hybrid BroadcastChannel mesh sync for resilient local fallback', color: 'cyan' },
 ]
 
 const DEMO_SETUP = [
@@ -112,7 +112,7 @@ export default function LandingPage() {
           </p>
 
           <div className="flex flex-wrap items-center justify-center gap-5 text-xs md:text-sm text-slate-600 mb-8 font-medium">
-            {['Ministry of Ayush Compliant', 'DPDP Act 2023 Compliant', 'ABDM / ABHA Standards', 'HL7 / FHIR Architecture'].map((badge) => (
+            {['Ministry of Ayush Aligned', 'DPDP Act 2023 Ready', 'ABDM-Ready Architecture', 'FHIR-Structured Data Model'].map((badge) => (
               <span key={badge} className="flex items-center gap-1.5 bg-slate-100 border border-slate-200 px-3 py-1 rounded-md">
                 <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                 {badge}
@@ -187,7 +187,7 @@ export default function LandingPage() {
               <p className="text-xs text-slate-500">Recommended setup for outpatient hospital intake and physician examination rooms</p>
             </div>
             <span className="text-xs font-mono text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded font-semibold hidden sm:inline">
-              HL7 / FHIR Synchronized
+              FHIR-Structured Records
             </span>
           </div>
 
@@ -265,7 +265,7 @@ export default function LandingPage() {
             <span className="block text-[11px] text-slate-500">National Health Mission - Ministry of Ayush - Government of India</span>
           </div>
           <div className="text-xs text-slate-400">
-            System Node: Active Clinical Station (HL7/FHIR Compliant) - Offline Local Bus Supported
+            System Node: Active Clinical Station (FHIR-Ready · ABDM Architecture) – Offline Local Bus Supported
           </div>
         </div>
       </footer>

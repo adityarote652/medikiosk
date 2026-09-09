@@ -343,7 +343,7 @@ function FHIRModal({ patient, onClose }) {
           effectiveDateTime: new Date().toISOString(),
         },
       },
-      ...((patient.extracted_records?.medications || []).map((med, i) => ({
+      ...((patient.extracted_records?.medications || []).map((med) => ({
         resource: {
           resourceType: 'MedicationStatement',
           subject: { reference: `Patient/${patient.abha_id || 'unknown'}` },
@@ -466,7 +466,11 @@ export default function DoctorConsole() {
   const toggle = (key) => setExpanded((p) => ({ ...p, [key]: !p[key] }))
 
   const filteredPatients = patients
-    .filter(pt => filterTab === 'ALL' || pt.triage_level === filterTab)
+    .filter(pt => {
+      if (filterTab === 'ALL') return true
+      if (filterTab === 'IN_PROGRESS') return pt.status === 'IN_PROGRESS'
+      return pt.triage_level === filterTab
+    })
     .filter(pt => !searchQuery ||
       pt.patient_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       String(pt.token_number ?? '').includes(searchQuery)
@@ -560,8 +564,8 @@ export default function DoctorConsole() {
             </div>
             
             {/* Filter Tabs */}
-            <div className="flex bg-slate-200/50 p-1 rounded-lg">
-              {['ALL', 'EMERGENCY', 'URGENT', 'ROUTINE'].map(tab => (
+            <div className="flex bg-slate-200/50 p-1 rounded-lg flex-wrap gap-0.5">
+              {['ALL', 'EMERGENCY', 'URGENT', 'ROUTINE', 'IN_PROGRESS'].map(tab => (
                 <button
                   key={tab}
                   onClick={() => setFilterTab(tab)}
@@ -571,7 +575,7 @@ export default function DoctorConsole() {
                       : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
                   }`}
                 >
-                  {tab === 'EMERGENCY' ? 'EMERG' : tab}
+                  {tab === 'EMERGENCY' ? 'EMERG' : tab === 'IN_PROGRESS' ? 'IN PROG' : tab}
                 </button>
               ))}
             </div>

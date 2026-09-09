@@ -43,7 +43,7 @@ function EnterpriseHeader() {
             <div className="text-left">
               <div className="text-sm font-bold leading-tight">Central OPD Intake Portal</div>
               <div className="text-[10px] text-slate-400 leading-tight hidden sm:block">
-                Apex Civil Hospital - HL7 / FHIR Compliant
+                Apex Civil Hospital – FHIR-Ready Structured Records
               </div>
             </div>
           </button>
